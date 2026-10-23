@@ -1,10 +1,22 @@
 import { Link, Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./auth.jsx";
+import { useTheme } from "./theme.js";
 import Login from "./pages/Login.jsx";
 import Register from "./pages/Register.jsx";
 import Home from "./pages/Home.jsx";
 import Admin from "./pages/Admin.jsx";
 import Profile from "./pages/Profile.jsx";
+
+function ThemeToggle() {
+  const { theme, toggle } = useTheme();
+  const toDark = theme !== "dark";
+  const label = toDark ? "Включить тёмную тему" : "Включить светлую тему";
+  return (
+    <button className="theme-toggle" onClick={toggle} title={label} aria-label={label}>
+      {toDark ? "🌙" : "☀️"}
+    </button>
+  );
+}
 
 function Header() {
   const { user, logout } = useAuth();
@@ -13,19 +25,22 @@ function Header() {
       <Link to="/" className="brand">
         ✒ Писательский конкурс
       </Link>
-      {user && (
-        <nav>
-          {user.role === "organizer" ? (
-            <Link to="/admin">Кабинет организатора</Link>
-          ) : (
-            <Link to="/profile">Личный кабинет</Link>
-          )}
-          <span className="muted">{user.nickname}</span>
-          <button className="link" onClick={logout}>
-            Выйти
-          </button>
-        </nav>
-      )}
+      <div className="topbar-right">
+        {user && (
+          <nav>
+            {user.role === "organizer" ? (
+              <Link to="/admin">Кабинет организатора</Link>
+            ) : (
+              <Link to="/profile">Личный кабинет</Link>
+            )}
+            <span className="muted">{user.nickname}</span>
+            <button className="link" onClick={logout}>
+              Выйти
+            </button>
+          </nav>
+        )}
+        <ThemeToggle />
+      </div>
     </header>
   );
 }

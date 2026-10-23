@@ -2,8 +2,20 @@ import { useCallback, useEffect, useState } from "react";
 import { api, countWords } from "../api";
 import Deadline from "../components/Deadline.jsx";
 import ScaleInput from "../components/ScaleInput.jsx";
+import Disclaimer from "../components/Disclaimer.jsx";
+import StoryBody from "../components/StoryBody.jsx";
+import SurveyForm, { emptySurvey, normSurvey } from "../components/SurveyForm.jsx";
 
 const MAX_REVIEW = 5000;
+const HIDE_KEY = "voting:hideRated";
+
+function loadHide() {
+  try {
+    return localStorage.getItem(HIDE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 export default function Voting({ contest, reload }) {
   const scales = contest.scales;
@@ -14,9 +26,12 @@ export default function Voting({ contest, reload }) {
   const [draft, setDraft] = useState({});
   const [reviewDraft, setReviewDraft] = useState("");
   const [reviewNote, setReviewNote] = useState("");
+  const [surveyDraft, setSurveyDraft] = useState(emptySurvey);
+  const [surveyNote, setSurveyNote] = useState("");
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const [hideRated, setHideRated] = useState(loadHide);
 
   const loadList = useCallback(async () => {
     try {
@@ -39,11 +54,13 @@ export default function Voting({ contest, reload }) {
     setStory(null);
     setNote("");
     setReviewNote("");
+    setSurveyNote("");
     try {
       const s = await api(`/voting/stories/${n}`);
       setStory(s);
       setDraft(s.my_rating || {});
       setReviewDraft(s.my_review || "");
+      setSurveyDraft({ ...emptySurvey, ...(s.my_survey || {}) });
     } catch (e) {
       setError(e.message);
     }
@@ -105,6 +122,29 @@ export default function Voting({ contest, reload }) {
     }
   };
 
+  const questions = contest.survey ?? [];
+  const surveyChanged =
+    story &&
+    JSON.stringify(normSurvey(questions, surveyDraft)) !== JSON.stringify(normSurvey(questions, story.my_survey ?? {}));
+
+  const saveSurvey = async () => {
+    setBusy(true);
+    setSurveyNote("");
+    try {
+      const res = await api(`/voting/stories/${selected}/survey`, {
+        method: "PUT",
+        body: normSurvey(questions, surveyDraft),
+      });
+      setStory({ ...story, my_survey: res.my_survey });
+      setSurveyDraft({ ...emptySurvey, ...(res.my_survey || {}) });
+      setSurveyNote(res.my_survey ? "Ответы сохранены" : "Ответы удалены");
+    } catch (e) {
+      setSurveyNote(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const toggleStar = async () => {
     setNote("");
     try {
@@ -122,7 +162,16 @@ export default function Voting({ contest, reload }) {
   if (error && !list) return <p className="error">{error}</p>;
   if (!list) return <p className="center">Загрузка…</p>;
 
+  const toggleHide = (on) => {
+    setHideRated(on);
+    try {
+      localStorage.setItem(HIDE_KEY, on ? "1" : "0");
+    } catch {}
+  };
+
   const rated = list.filter((i) => i.rated).length;
+  // Открытый рассказ не прячем, даже если только что его оценили: иначе он «убежит» из списка под рукой.
+  const visible = hideRated ? list.filter((i) => !i.rated || i.anon_number === selected) : list;
   const total = contest.stars_total;
 
   return (
@@ -142,9 +191,15 @@ export default function Voting({ contest, reload }) {
           <span className="muted small"> осталось {starsLeft} из {total}</span>
         </p>
         <p className="muted small">Авторы скрыты до публикации результатов. Свой рассказ вы тут не увидите.</p>
+        {list.length > 0 && (
+          <label className="inline check">
+            <input type="checkbox" checked={hideRated} onChange={(e) => toggleHide(e.target.checked)} /> Скрыть оценённое
+          </label>
+        )}
         {list.length === 0 && <p>Пока нет рассказов для оценки.</p>}
+        {list.length > 0 && visible.length === 0 && <p className="muted">Все работы оценены.</p>}
         <ul className="story-list">
-          {list.map((i) => (
+          {visible.map((i) => (
             <li key={i.anon_number}>
               <button className={i.anon_number === selected ? "active" : ""} onClick={() => open(i.anon_number)}>
                 <span className="num">№{i.anon_number}</span>
@@ -167,7 +222,8 @@ export default function Voting({ contest, reload }) {
           <>
             <div className="eyebrow">Рассказ №{story.anon_number}</div>
             <h2>{story.title}</h2>
-            <article className="story-body">{story.body}</article>
+            <Disclaimer text={story.disclaimer} />
+            <StoryBody html={story.body} />
 
             <hr />
             <h3>Ваша оценка</h3>
@@ -226,6 +282,29 @@ export default function Voting({ contest, reload }) {
               </span>
             </div>
             {reviewNote && <p className="note">{reviewNote}</p>}
+
+            {questions.length > 0 && (
+              <>
+                <hr />
+                <h3>Опросник</h3>
+                <p className="muted small">
+                  Необязательно, нужен только для статистики и никак не влияет на оценки и топы. Итоги по рассказу и
+                  по всему конкурсу будут показаны в финале, без привязки к людям.
+                </p>
+                <SurveyForm questions={questions} value={surveyDraft} onChange={setSurveyDraft} />
+                <div className="row">
+                  <button className="primary" disabled={!surveyChanged || busy} onClick={saveSurvey}>
+                    Сохранить ответы
+                  </button>
+                  {surveyDraft !== emptySurvey && (
+                    <button type="button" className="link" onClick={() => setSurveyDraft(emptySurvey)}>
+                      Сбросить
+                    </button>
+                  )}
+                </div>
+                {surveyNote && <p className="note">{surveyNote}</p>}
+              </>
+            )}
           </>
         )}
       </section>

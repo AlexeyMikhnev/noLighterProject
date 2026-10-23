@@ -20,6 +20,7 @@ def _out(s: Story) -> dict:
     return {
         "title": s.title,
         "body": s.body,
+        "disclaimer": s.disclaimer,
         "created_at": iso(s.created_at),
         "updated_at": iso(s.updated_at),
     }
@@ -44,10 +45,16 @@ def put_my_story(
 ):
     story = _own(db, contest, user)
     if story is None:
-        story = Story(contest_id=contest.id, author_id=user.id, title=data.title, body=data.body)
+        story = Story(
+            contest_id=contest.id,
+            author_id=user.id,
+            title=data.title,
+            body=data.body,
+            disclaimer=data.disclaimer,
+        )
         db.add(story)
     else:
-        story.title, story.body, story.updated_at = data.title, data.body, utcnow()
+        story.title, story.body, story.disclaimer, story.updated_at = data.title, data.body, data.disclaimer, utcnow()
     db.commit()
     return _out(story)
 

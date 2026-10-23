@@ -160,6 +160,7 @@ def my_contest(contest_id: int, user: User = Depends(require_participant), db: S
             {
                 "title": story.title,
                 "body": story.body,
+                "disclaimer": story.disclaimer,
                 "anon_number": story.anon_number if results_open else None,
                 "created_at": iso(story.created_at),
                 "updated_at": iso(story.updated_at),

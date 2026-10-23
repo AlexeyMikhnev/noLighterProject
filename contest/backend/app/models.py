@@ -6,6 +6,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -68,6 +69,8 @@ class Story(Base):
     author_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     title: Mapped[str] = mapped_column(String(200))
     body: Mapped[str] = mapped_column(Text)
+    # Предупреждение автора читателям (жанр, возрастные ограничения и т. п.), может быть пустым.
+    disclaimer: Mapped[str] = mapped_column(Text, default="")
     # Случайный номер, присваивается при старте голосования. Наружу до финала
     # отдаётся ТОЛЬКО он: id и время загрузки выдали бы порядок отправки.
     anon_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -92,9 +95,29 @@ class Rating(Base):
     impression: Mapped[int] = mapped_column(Integer)
     theme: Mapped[int] = mapped_column(Integer)
     style: Mapped[int] = mapped_column(Integer)
-    light: Mapped[int] = mapped_column(Integer)
-    dark: Mapped[int] = mapped_column(Integer)
+    mood: Mapped[int] = mapped_column(Integer)
     adventure: Mapped[int] = mapped_column(Integer)
+
+
+class Survey(Base):
+    """Опросник читателя о рассказе (для статистики). Не влияет на оценки и топы.
+
+    Пустое значение (пустой список / NULL) = «не ответил». Наружу уходят только агрегаты по рассказу.
+    """
+
+    __tablename__ = "surveys"
+    __table_args__ = (UniqueConstraint("story_id", "rater_id", name="uq_survey"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    story_id: Mapped[int] = mapped_column(ForeignKey("stories.id"), index=True)
+    rater_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    genres: Mapped[list] = mapped_column(JSON, default=list)
+    settings: Mapped[list] = mapped_column(JSON, default=list)
+    hero_gender: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    about_children: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    about_animals: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    someone_died: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    has_guns: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
 
 class Star(Base):
