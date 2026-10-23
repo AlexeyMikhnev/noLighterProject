@@ -6,8 +6,10 @@ from sqlalchemy.orm import Session
 from ..config import SCALE_KEYS, STARS_PER_USER
 from ..db import get_db
 from ..deps import require_participant, require_phase
-from ..models import Contest, Rating, Review, Star, Story, User
-from ..schemas import RatingIn, ReviewIn
+from ..models import Contest, Rating, Review, Star, Story, Survey, User
+from ..richtext import word_count
+from ..schemas import RatingIn, ReviewIn, SurveyIn
+from ..services import survey_dict
 from ..services_time import utcnow
 
 router = APIRouter(prefix="/api/voting", tags=["voting"])
@@ -53,11 +55,15 @@ def _item(s: Story, rating: Rating | None, starred: bool, reviewed: bool = False
     return {
         "anon_number": s.anon_number,
         "title": s.title,
-        "words": len(s.body.split()),
+        "words": word_count(s.body),
         "rated": rating is not None,
         "starred": starred,
         "reviewed": reviewed,
     }
+
+
+def _my_survey(db: Session, story: Story, user: User) -> Survey | None:
+    return db.scalar(select(Survey).where(Survey.story_id == story.id, Survey.rater_id == user.id))
 
 
 def _my_review(db: Session, story: Story, user: User) -> Review | None:
@@ -98,9 +104,11 @@ def read_story(anon_number: int, ctx=Depends(voter), db: Session = Depends(get_d
         "anon_number": s.anon_number,
         "title": s.title,
         "body": s.body,
+        "disclaimer": s.disclaimer,
         "my_rating": _rating_dict(rating),
         "starred": starred is not None,
         "my_review": review.body if (review := _my_review(db, s, user)) else None,
+        "my_survey": survey_dict(_my_survey(db, s, user)),
     }
 
 
@@ -118,6 +126,26 @@ def put_rating(anon_number: int, data: RatingIn, ctx=Depends(voter), db: Session
     db.commit()
     starred = db.scalar(select(Star.id).where(Star.story_id == s.id, Star.giver_id == user.id))
     return _item(s, rating, starred is not None, _my_review(db, s, user) is not None)
+
+
+@router.put("/stories/{anon_number}/survey")
+def put_survey(anon_number: int, data: SurveyIn, ctx=Depends(voter), db: Session = Depends(get_db)):
+    """Опросник для статистики: не влияет на оценки и топы. Пустые ответы = опросник удалён."""
+    user, contest = ctx
+    s = _story(db, contest, user, anon_number)
+    survey = _my_survey(db, s, user)
+    if data.is_empty():
+        if survey:
+            db.delete(survey)
+            db.commit()
+        return {"my_survey": None}
+    if survey is None:
+        survey = Survey(story_id=s.id, rater_id=user.id)
+        db.add(survey)
+    for k, v in data.model_dump().items():
+        setattr(survey, k, v)
+    db.commit()
+    return {"my_survey": survey_dict(survey)}
 
 
 @router.put("/stories/{anon_number}/star")

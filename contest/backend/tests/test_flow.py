@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 NICKS = ["alice", "bob", "carol", "dave", "erin"]
-SCALES = ["impression", "theme", "style", "light", "dark", "adventure"]
+SCALES = ["impression", "theme", "style", "mood", "adventure"]
 
 
 def rating(v: int) -> dict:
@@ -99,6 +99,120 @@ def test_submission_is_editable_then_frozen(client, admin, make_user):
     r = client.put("/api/stories/me", json={"title": "v3", "body": "поздно"}, headers=user)
     assert r.status_code == 403
     assert client.delete("/api/stories/me", headers=user).status_code == 403
+
+
+def test_story_disclaimer_and_limits(client, admin, make_user):
+    user = make_user("alice")
+    start_contest(client, admin)
+    advance(client, admin, "submission")
+    put = lambda **kw: client.put("/api/stories/me", json={"title": "t", "body": "текст"} | kw, headers=user)
+
+    # дисклеймер необязателен
+    r = put()
+    assert r.status_code == 200 and r.json()["disclaimer"] == ""
+
+    # сохраняется (пробелы по краям срезаются) и меняется
+    r = put(disclaimer="  18+, тяжёлая тема \n")
+    assert r.json()["disclaimer"] == "18+, тяжёлая тема"
+    assert client.get("/api/stories/me", headers=user).json()["disclaimer"] == "18+, тяжёлая тема"
+    assert put(disclaimer="").json()["disclaimer"] == ""
+
+    # границы: дисклеймер до 1000, рассказ до 10 000 знаков
+    assert put(disclaimer="я" * 1000).status_code == 200
+    assert put(disclaimer="я" * 1001).status_code == 422
+    assert put(body="я" * 10_000).status_code == 200
+    assert put(body="я" * 10_001).status_code == 422
+
+
+def test_story_richtext_is_sanitized(client, admin, make_user):
+    user = make_user("alice")
+    start_contest(client, admin)
+    advance(client, admin, "submission")
+    put = lambda body: client.put("/api/stories/me", json={"title": "t", "body": body}, headers=user)
+
+    # форматирование сохраняется, опасное вырезается
+    r = put('<p>Это <strong>важно</strong></p><script>alert(1)</script><p onclick="x()"><a href="javascript:1">ссылка</a></p>')
+    assert r.status_code == 200
+    assert r.json()["body"] == "<p>Это <strong>важно</strong></p><p>ссылка</p>"
+
+    # обычный текст превращается в абзацы
+    assert put("раз\n\nдва").json()["body"] == "<p>раз</p><p>два</p>"
+
+    # лимит считается по видимому тексту, а не по размеру разметки
+    marked = "<p>" + "<strong>я</strong>" * 5_000 + "</p>"  # 5000 знаков, ~100 КБ сырого HTML
+    assert put(marked).status_code == 422  # сырой HTML выше потолка
+    assert put("<p>" + "<em>я</em>" * 3_000 + "</p>").status_code == 200  # ~37 КБ разметки, 3000 знаков
+    assert put("<p>" + "я" * 10_001 + "</p>").status_code == 422
+    # пустой после очистки текст отклоняется
+    assert put("<p> </p><script>x</script>").status_code == 422
+
+
+def test_survey_is_optional_and_only_aggregated(client, admin, voting):
+    alice, bob, carol, dave = (voting[n] for n in ("alice", "bob", "carol", "dave"))
+    n = number_of(client, alice, "Story bob")
+    url = f"/api/voting/stories/{n}/survey"
+
+    cur = client.get("/api/contest/current", headers=alice).json()
+    assert [q["key"] for q in cur["survey"]][:3] == ["genres", "settings", "hero_gender"]
+    assert client.get(f"/api/voting/stories/{n}", headers=alice).json()["my_survey"] is None
+
+    full = {
+        "genres": ["drama", "drama", "thriller"],
+        "settings": ["scifi"],
+        "hero_gender": "female",
+        "about_children": False,  # «нет» — это ответ, а не пустота
+        "about_animals": None,
+        "someone_died": True,
+        "has_guns": False,
+    }
+    r = client.put(url, json=full, headers=alice)
+    assert r.status_code == 200, r.text
+    mine = r.json()["my_survey"]
+    assert mine["genres"] == ["drama", "thriller"] and mine["about_children"] is False and mine["about_animals"] is None
+    assert client.get(f"/api/voting/stories/{n}", headers=alice).json()["my_survey"] == mine
+
+    # можно ответить частично, ответы можно переписать
+    assert client.put(url, json={"genres": ["drama"], "someone_died": True}, headers=carol).status_code == 200
+
+    # мусор отклоняется
+    for bad in ({"genres": ["nope"]}, {"hero_gender": "x"}, {"unknown": 1}, {"about_guns": True}):
+        assert client.put(url, json=bad, headers=dave).status_code == 422
+    # на свой рассказ нельзя
+    assert client.put(url, json=full, headers=bob).status_code == 403
+
+    # пустой опросник = ответы удалены, в статистику не попадает
+    assert client.put(url, json={"genres": ["comedy"]}, headers=dave).status_code == 200
+    assert client.put(url, json={}, headers=dave).json()["my_survey"] is None
+
+    advance(client, admin, "results")
+    st = client.get(f"/api/results/stories/{n}", headers=alice).json()["survey"]
+    assert st["respondents"] == 2
+    q = {x["key"]: x for x in st["questions"]}
+    genres = {o["key"]: o["count"] for o in q["genres"]["options"]}
+    assert genres["drama"] == 2 and genres["thriller"] == 1 and genres["comedy"] == 0
+    died = {o["key"]: o["count"] for o in q["someone_died"]["options"]}
+    assert died == {"yes": 2, "no": 0}
+    assert q["about_children"]["answered"] == 1 and q["about_animals"]["answered"] == 0
+    # по конкурсу в целом тоже только агрегаты
+    total = client.get("/api/results", headers=alice).json()["survey"]
+    assert total["respondents"] == 2
+    assert "rater" not in str(total)
+
+
+def test_disclaimer_shown_to_readers(client, admin, make_user):
+    alice, bob = make_user("alice"), make_user("bob")
+    start_contest(client, admin)
+    advance(client, admin, "submission")
+    client.put("/api/stories/me", json={"title": "A", "body": "a", "disclaimer": "осторожно: грусть"}, headers=alice)
+    submit(client, bob, "B")
+    advance(client, admin, "voting")
+    n = number_of(client, bob, "A")
+    assert client.get(f"/api/voting/stories/{n}", headers=bob).json()["disclaimer"] == "осторожно: грусть"
+    advance(client, admin, "results")
+    assert client.get(f"/api/results/stories/{n}", headers=bob).json()["disclaimer"] == "осторожно: грусть"
+    cab = client.get("/api/me/contests", headers=alice).json()
+    detail = client.get(f"/api/me/contests/{cab[0]['id']}", headers=alice).json()
+    assert detail["story"]["disclaimer"] == "осторожно: грусть"
 
 
 def test_voting_not_available_during_submission(client, admin, make_user):
@@ -243,7 +357,7 @@ def test_results_tops_and_reveal(client, voting, admin):
     vote("carol", "Story bob", style=3)
     vote("alice", "Story carol", style=4)
     vote("bob", "Story carol", style=4)
-    vote("alice", "Story dave", style=2, dark=5)  # одна оценка
+    vote("alice", "Story dave", style=2, mood=5)  # одна оценка
 
     # звёзды: bob получает 2, carol 1
     for voter, title in (("alice", "Story bob"), ("carol", "Story bob"), ("dave", "Story carol")):
@@ -259,8 +373,8 @@ def test_results_tops_and_reveal(client, voting, admin):
     assert {e["author"] for e in style[:2]} == {"bob", "carol"}
     assert style[2]["author"] == "dave" and style[2]["value"] == 2.0
 
-    dark = by_key["dark"]
-    assert dark[0]["author"] == "dave" and dark[0]["value"] == 5.0 and dark[0]["rank"] == 1
+    mood = by_key["mood"]
+    assert mood[0]["author"] == "dave" and mood[0]["value"] == 5.0 and mood[0]["rank"] == 1
 
     # работа без единой оценки в топ по шкалам не попадает
     assert all(e["author"] not in ("alice", "erin") for e in style)

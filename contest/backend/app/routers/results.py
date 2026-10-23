@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, selectinload
 from ..db import get_db
 from ..deps import get_current_user, require_phase
 from ..models import Contest, Review, Story, User
+from ..richtext import word_count
 from ..services import compute_results, story_result
 
 router = APIRouter(prefix="/api/results", tags=["results"])
@@ -46,7 +47,7 @@ def all_stories(
             "anon_number": s.anon_number,
             "title": s.title,
             "author": s.author.nickname,
-            "words": len(s.body.split()),
+            "words": word_count(s.body),
             "reviews": counts.get(s.id, 0),
         }
         for s in stories

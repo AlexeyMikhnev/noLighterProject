@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import Reviews from "../components/Reviews.jsx";
+import Disclaimer from "../components/Disclaimer.jsx";
+import StoryBody from "../components/StoryBody.jsx";
+import SurveyStats from "../components/SurveyStats.jsx";
 
 function fmt(v, isStars) {
   return isStars ? String(v) : v.toFixed(2);
@@ -49,6 +52,8 @@ export default function Results({ contest }) {
         Авторы раскрыты. Топы считаются отдельно по каждой шкале (средняя оценка) и отдельно по звёздам.
         Всего работ: {data.totals.stories}, оценок: {data.totals.ratings}, звёзд: {data.totals.stars}.
       </p>
+
+      <SurveyStats stats={data.survey} title="Опросник читателей: весь конкурс" />
 
       <div className="tabs" role="tablist">
         {tabs.map((t) => (
@@ -147,7 +152,9 @@ export default function Results({ contest }) {
             {story.scores &&
               " · " + contest.scales.map((s) => `${s.label}: ${story.scores[s.key].toFixed(2)}`).join(" · ")}
           </p>
-          <article className="story-body">{story.body}</article>
+          <Disclaimer text={story.disclaimer} />
+          <StoryBody html={story.body} />
+          <SurveyStats stats={story.survey} title="Опросник читателей: этот рассказ" />
           <Reviews reviews={story.reviews} />
         </section>
       )}

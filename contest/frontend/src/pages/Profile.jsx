@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { api, formatDate } from "../api";
 import { useAuth } from "../auth.jsx";
 import Reviews from "../components/Reviews.jsx";
+import Disclaimer from "../components/Disclaimer.jsx";
+import StoryBody from "../components/StoryBody.jsx";
 
 const PHASE = { draft: "подготовка", submission: "приём работ", voting: "оценивание", results: "завершён" };
 
@@ -88,7 +90,8 @@ function DetailBody({ d, revealed }) {
             <summary>
               <strong>{d.story.title}</strong>
             </summary>
-            <article className="story-body">{d.story.body}</article>
+            <Disclaimer text={d.story.disclaimer} />
+            <StoryBody html={d.story.body} />
           </details>
         </>
       ) : (

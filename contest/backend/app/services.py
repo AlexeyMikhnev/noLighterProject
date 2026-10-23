@@ -4,8 +4,8 @@ import random
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from .config import SCALE_KEYS, SCALES, STARS_PER_USER
-from .models import Contest, Rating, Review, Star, Story, User
+from .config import SCALE_KEYS, SCALES, STARS_PER_USER, SURVEY, SURVEY_BOOL_KEYS
+from .models import Contest, Rating, Review, Star, Story, Survey, User
 from .services_time import iso, utcnow
 
 PHASES = ["draft", "submission", "voting", "results"]
@@ -59,6 +59,47 @@ def assign_anon_numbers(db: Session, contest: Contest) -> None:
 # ---------- представление конкурса ----------
 
 
+def _survey_question(q: dict) -> dict:
+    out = {"key": q["key"], "label": q["label"], "type": q["type"]}
+    if "options" in q:
+        out["options"] = [{"key": k, "label": label} for k, label in q["options"]]
+    return out
+
+
+def survey_dict(sv: Survey | None) -> dict | None:
+    """Ответы одного читателя (видит только он сам)."""
+    if sv is None:
+        return None
+    return {
+        "genres": list(sv.genres or []),
+        "settings": list(sv.settings or []),
+        "hero_gender": sv.hero_gender,
+        **{k: getattr(sv, k) for k in SURVEY_BOOL_KEYS},
+    }
+
+
+def survey_stats(rows: list[Survey]) -> dict:
+    """Агрегаты опросника: сколько читателей выбрали каждый вариант. Без привязки к читателям."""
+    questions = []
+    for q in SURVEY:
+        key = q["key"]
+        if q["type"] == "bool":
+            vals = [getattr(r, key) for r in rows if getattr(r, key) is not None]
+            counts = {"yes": sum(1 for v in vals if v), "no": sum(1 for v in vals if not v)}
+            options = [{"key": "yes", "label": "Да", "count": counts["yes"]}, {"key": "no", "label": "Нет", "count": counts["no"]}]
+            answered = len(vals)
+        elif q["type"] == "single":
+            vals = [getattr(r, key) for r in rows if getattr(r, key)]
+            options = [{"key": k, "label": label, "count": vals.count(k)} for k, label in q["options"]]
+            answered = len(vals)
+        else:
+            vals = [getattr(r, key) or [] for r in rows]
+            options = [{"key": k, "label": label, "count": sum(1 for v in vals if k in v)} for k, label in q["options"]]
+            answered = sum(1 for v in vals if v)
+        questions.append({"key": key, "label": q["label"], "type": q["type"], "answered": answered, "options": options})
+    return {"respondents": len(rows), "questions": questions}
+
+
 def contest_to_dict(db: Session, contest: Contest, user: User) -> dict:
     is_org = user.role == "organizer"
     data = {
@@ -72,6 +113,7 @@ def contest_to_dict(db: Session, contest: Contest, user: User) -> dict:
         "voters_must_submit": contest.voters_must_submit,
         "scales": [{"key": k, "label": label, "hint": hint} for k, label, hint in SCALES],
         "stars_total": STARS_PER_USER,
+        "survey": [_survey_question(q) for q in SURVEY],
         "me": None,
     }
     if not is_org:
@@ -177,6 +219,11 @@ def compute_results(db: Session, contest: Contest) -> dict:
             "ratings": sum(a["votes"] for a in avg.values()),
             "stars": sum(stars.values()),
         },
+        "survey": survey_stats(
+            db.scalars(
+                select(Survey).join(Story, Story.id == Survey.story_id).where(Story.contest_id == contest.id)
+            ).all()
+        ),
     }
 
 
@@ -198,9 +245,11 @@ def story_result(db: Session, contest: Contest, story: Story) -> dict:
         "anon_number": story.anon_number,
         "title": story.title,
         "body": story.body,
+        "disclaimer": story.disclaimer,
         "author": story.author.nickname,
         "votes": a["votes"] if a else 0,
         "scores": {k: a[k] for k in SCALE_KEYS} if a else None,
         "stars": stars.get(story.id, 0),
         "reviews": story_reviews(db, story),
+        "survey": survey_stats(db.scalars(select(Survey).where(Survey.story_id == story.id)).all()),
     }

@@ -1,9 +1,11 @@
 import re
 from datetime import datetime
+from html import escape
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .config import MAX_BODY_CHARS, MAX_REVIEW_CHARS, MAX_TITLE_CHARS
+from .config import SURVEY_BOOL_KEYS, SURVEY_BY_KEY, MAX_BODY_CHARS, MAX_BODY_HTML_CHARS, MAX_DISCLAIMER_CHARS, MAX_REVIEW_CHARS, MAX_TITLE_CHARS
+from .richtext import analyze
 from .services_time import to_naive_utc
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -39,7 +41,8 @@ class LoginIn(BaseModel):
 
 class StoryIn(BaseModel):
     title: str = Field(min_length=1, max_length=MAX_TITLE_CHARS)
-    body: str = Field(min_length=1, max_length=MAX_BODY_CHARS)
+    body: str = Field(min_length=1, max_length=MAX_BODY_HTML_CHARS)
+    disclaimer: str = Field(default="", max_length=MAX_DISCLAIMER_CHARS)
 
     @field_validator("title")
     @classmethod
@@ -53,9 +56,21 @@ class StoryIn(BaseModel):
     @classmethod
     def _body(cls, v: str) -> str:
         v = v.replace("\r\n", "\n").strip()
-        if not v:
+        if "<" not in v:
+            # обычный текст (не из редактора): пустая строка делит абзацы, иначе они склеились бы
+            v = "".join(f"<p>{escape(p.strip(), quote=False).replace(chr(10), "<br>")}</p>" for p in v.split("\n\n") if p.strip())
+        # В базу и в ответы API попадает только результат очистки по белому списку тегов.
+        html, chars = analyze(v)
+        if chars == 0:
             raise ValueError("Текст не может быть пустым")
-        return v
+        if chars > MAX_BODY_CHARS:
+            raise ValueError(f"Текст длиннее {MAX_BODY_CHARS} знаков (сейчас {chars})")
+        return html
+
+    @field_validator("disclaimer")
+    @classmethod
+    def _disclaimer(cls, v: str) -> str:
+        return v.replace("\r\n", "\n").strip()
 
 
 class RatingIn(BaseModel):
@@ -64,9 +79,51 @@ class RatingIn(BaseModel):
     impression: int = Field(ge=1, le=5)
     theme: int = Field(ge=1, le=5)
     style: int = Field(ge=1, le=5)
-    light: int = Field(ge=1, le=5)
-    dark: int = Field(ge=1, le=5)
+    mood: int = Field(ge=1, le=5)
     adventure: int = Field(ge=1, le=5)
+
+
+def _option_keys(question: str) -> set[str]:
+    return {k for k, _ in SURVEY_BY_KEY[question]["options"]}
+
+
+class SurveyIn(BaseModel):
+    """Все поля необязательны: пустой список / null = «не ответил»."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    genres: list[str] = []
+    settings: list[str] = []
+    hero_gender: str | None = None
+    about_children: bool | None = None
+    about_animals: bool | None = None
+    someone_died: bool | None = None
+    has_guns: bool | None = None
+
+    @field_validator("genres", "settings")
+    @classmethod
+    def _multi(cls, v: list[str], info) -> list[str]:
+        allowed = _option_keys(info.field_name)
+        bad = [x for x in v if x not in allowed]
+        if bad:
+            raise ValueError(f"Неизвестные варианты: {', '.join(bad)}")
+        return list(dict.fromkeys(v))  # без повторов, порядок сохраняется
+
+    @field_validator("hero_gender")
+    @classmethod
+    def _single(cls, v: str | None) -> str | None:
+        if v is not None and v not in _option_keys("hero_gender"):
+            raise ValueError("Неизвестный вариант")
+        return v
+
+    def is_empty(self) -> bool:
+        """Ничего не отвечено. Осторожно: False у булевых — это ответ «нет», а не пустота."""
+        return (
+            not self.genres
+            and not self.settings
+            and self.hero_gender is None
+            and all(getattr(self, k) is None for k in SURVEY_BOOL_KEYS)
+        )
 
 
 class ReviewIn(BaseModel):
