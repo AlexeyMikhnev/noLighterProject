@@ -129,7 +129,8 @@ def _received(db: Session, contest: Contest, story: Story) -> dict:
             {
                 "key": key,
                 "label": label,
-                "value": entry["value"] if entry else None,
+                # свой средний балл автор видит всегда; места нет у тех, кого исключили из топов (нарушителей)
+                "value": mine["scores"][key] if mine["scores"] else None,
                 "rank": entry["rank"] if entry else None,
             }
         )
@@ -139,6 +140,7 @@ def _received(db: Session, contest: Contest, story: Story) -> dict:
         "scales": scales,
         "stars": mine["stars"],
         "stars_rank": star_entry["rank"] if star_entry else None,
+        "violation": mine["violation"],
         "reviews": mine["reviews"],
     }
 

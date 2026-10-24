@@ -4,7 +4,7 @@ from html import escape
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .config import SURVEY_BOOL_KEYS, SURVEY_BY_KEY, MAX_BODY_CHARS, MAX_BODY_HTML_CHARS, MAX_DISCLAIMER_CHARS, MAX_REVIEW_CHARS, MAX_TITLE_CHARS
+from .config import MAX_RULES_CHARS, MAX_RULES_HTML_CHARS, SURVEY_BOOL_KEYS, SURVEY_BY_KEY, MAX_BODY_CHARS, MAX_BODY_HTML_CHARS, MAX_DISCLAIMER_CHARS, MAX_REVIEW_CHARS, MAX_TITLE_CHARS
 from .richtext import analyze
 from .services_time import to_naive_utc
 
@@ -39,6 +39,28 @@ class LoginIn(BaseModel):
     password: str
 
 
+def _plain_to_html(v: str) -> str:
+    """Обычный текст (не из редактора): пустая строка делит абзацы, иначе они склеились бы."""
+    return "".join(f"<p>{escape(p.strip(), quote=False).replace(chr(10), '<br>')}</p>" for p in v.split("\n\n") if p.strip())
+
+
+class RulesIn(BaseModel):
+    """Текст правил из редактора; пустой допустим («правила не опубликованы»)."""
+
+    body: str = Field(max_length=MAX_RULES_HTML_CHARS)
+
+    @field_validator("body")
+    @classmethod
+    def _body(cls, v: str) -> str:
+        v = v.replace("\r\n", "\n").strip()
+        if v and "<" not in v:
+            v = _plain_to_html(v)
+        html, chars = analyze(v)
+        if chars > MAX_RULES_CHARS:
+            raise ValueError(f"Правила длиннее {MAX_RULES_CHARS} знаков (сейчас {chars})")
+        return html
+
+
 class StoryIn(BaseModel):
     title: str = Field(min_length=1, max_length=MAX_TITLE_CHARS)
     body: str = Field(min_length=1, max_length=MAX_BODY_HTML_CHARS)
@@ -57,8 +79,7 @@ class StoryIn(BaseModel):
     def _body(cls, v: str) -> str:
         v = v.replace("\r\n", "\n").strip()
         if "<" not in v:
-            # обычный текст (не из редактора): пустая строка делит абзацы, иначе они склеились бы
-            v = "".join(f"<p>{escape(p.strip(), quote=False).replace(chr(10), "<br>")}</p>" for p in v.split("\n\n") if p.strip())
+            v = _plain_to_html(v)
         # В базу и в ответы API попадает только результат очистки по белому списку тегов.
         html, chars = analyze(v)
         if chars == 0:

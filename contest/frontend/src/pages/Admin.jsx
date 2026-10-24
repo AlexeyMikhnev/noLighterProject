@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, formatDate, fromLocalInput, toLocalInput } from "../api";
 import PhaseSteps, { PHASE_LABELS } from "../components/PhaseSteps.jsx";
+import RichEditor from "../components/RichEditor.jsx";
 
 const NEXT_LABEL = {
   draft: "Начать приём работ",
@@ -243,6 +245,113 @@ function Invites() {
   );
 }
 
+const MAX_RULES = 20000;
+
+/** Текст правил: тот же редактор, что и для рассказов. Читателям уходит очищенный сервером HTML. */
+function RulesPanel() {
+  const [rules, setRules] = useState(null); // ответ сервера
+  const [html, setHtml] = useState("");
+  const [baseline, setBaseline] = useState("");
+  const [len, setLen] = useState(0);
+  const [editorKey, setEditorKey] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api("/rules")
+      .then((r) => {
+        setRules(r);
+        setHtml(r.body);
+      })
+      .catch((e) => setError(e.message));
+  }, []);
+
+  const apply = (r) => {
+    setRules(r);
+    setHtml(r.body);
+    setBaseline(r.body);
+    setEditorKey((k) => k + 1); // пересоздать редактор с новым текстом
+  };
+
+  const save = async () => {
+    setBusy(true);
+    setNote("");
+    setError("");
+    try {
+      const r = await api("/admin/rules", { method: "PUT", body: { body: html } });
+      setRules(r);
+      setBaseline(html); // сравниваем с тем, что отдал сам редактор, а не с очищенным ответом сервера
+      setNote("Правила сохранены");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reset = async () => {
+    if (!window.confirm("Вернуть стандартный текст правил? Ваш текст будет потерян.")) return;
+    setBusy(true);
+    setNote("");
+    setError("");
+    try {
+      apply(await api("/admin/rules", { method: "DELETE" }));
+      setNote("Возвращён стандартный текст");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const dirty = html !== baseline;
+
+  return (
+    <section className="card">
+      <h2>Правила конкурса</h2>
+      <p className="muted small">
+        Этот текст видят все на странице <Link to="/rules">«Правила»</Link>, в том числе до регистрации. Форматирование как у
+        рассказов: жирный, подзаголовки, списки, цитаты. {rules?.is_default && "Сейчас показан стандартный текст."}
+      </p>
+      {!rules && !error && <p className="muted">Загрузка…</p>}
+      {rules && (
+        <RichEditor
+          key={editorKey}
+          initialHtml={rules.body}
+          onReady={(h, n) => {
+            setHtml(h);
+            setBaseline(h);
+            setLen(n);
+          }}
+          onChange={(h, n) => {
+            setHtml(h);
+            setLen(n);
+          }}
+        />
+      )}
+      <div className="row between">
+        <span className="muted small">
+          {len} / {MAX_RULES} знаков
+          {len > MAX_RULES && <span className="error"> · слишком длинно</span>}
+        </span>
+      </div>
+      {error && <p className="error">{error}</p>}
+      {note && <p className="note">{note}</p>}
+      <div className="row">
+        <button className="primary" disabled={busy || !dirty || len > MAX_RULES} onClick={save}>
+          Сохранить правила
+        </button>
+        {rules && !rules.is_default && (
+          <button type="button" className="danger" disabled={busy} onClick={reset}>
+            Вернуть стандартный текст
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export default function Admin() {
   const [contest, setContest] = useState(undefined);
   const [stats, setStats] = useState(null);
@@ -279,6 +388,7 @@ export default function Admin() {
       {(!contest || contest.phase === "results") && <CreateContest onDone={load} />}
       {contest && <ContestPanel contest={contest} stats={stats} onChange={load} />}
       <Invites />
+      <RulesPanel />
     </>
   );
 }

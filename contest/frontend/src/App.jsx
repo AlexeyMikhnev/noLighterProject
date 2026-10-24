@@ -6,6 +6,7 @@ import Register from "./pages/Register.jsx";
 import Home from "./pages/Home.jsx";
 import Admin from "./pages/Admin.jsx";
 import Profile from "./pages/Profile.jsx";
+import Rules from "./pages/Rules.jsx";
 
 function ThemeToggle() {
   const { theme, toggle } = useTheme();
@@ -23,9 +24,10 @@ function Header() {
   return (
     <header className="topbar">
       <Link to="/" className="brand">
-        ✒ Писательский конкурс
+        ✒ Негрелочка
       </Link>
       <div className="topbar-right">
+        <Link to="/rules">Правила</Link>
         {user && (
           <nav>
             {user.role === "organizer" ? (
@@ -59,6 +61,7 @@ export default function App() {
       <Header />
       <main className="page">
         <Routes>
+          <Route path="/rules" element={<Rules />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register/:token" element={<Register />} />
           <Route path="/" element={<Private><Home /></Private>} />

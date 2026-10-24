@@ -17,6 +17,8 @@ MAX_TITLE_CHARS = 200
 MAX_BODY_CHARS = 10_000  # знаков видимого текста (без разметки)
 MAX_BODY_HTML_CHARS = 60_000  # грубый потолок на сырой HTML от редактора, до очистки
 MAX_DISCLAIMER_CHARS = 1_000
+MAX_RULES_CHARS = 20_000  # знаков видимого текста правил
+MAX_RULES_HTML_CHARS = 150_000  # потолок на сырой HTML от редактора
 MAX_REVIEW_CHARS = 5_000
 STARS_PER_USER = 3
 

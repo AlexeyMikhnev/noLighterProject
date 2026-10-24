@@ -6,6 +6,13 @@ NICKS = ["alice", "bob", "carol", "dave", "erin"]
 SCALES = ["impression", "theme", "style", "mood", "adventure"]
 
 
+@pytest.fixture()
+def lenient(monkeypatch):
+    """Отключает правило нарушителей: для тестов механики топов, где голосуют не все и не за всё."""
+    monkeypatch.setattr("app.services.violations", lambda *a, **k: {})
+    monkeypatch.setattr("app.routers.results.violations", lambda *a, **k: {})
+
+
 def rating(v: int) -> dict:
     return {k: v for k in SCALES}
 
@@ -199,6 +206,81 @@ def test_survey_is_optional_and_only_aggregated(client, admin, voting):
     assert "rater" not in str(total)
 
 
+def test_results_mark_authors_who_skipped_mandatory_voting(client, admin, voting):
+    """Нарушитель: оценил не все чужие работы или раздал не все звёзды. Текст его показывается, но с пометкой."""
+
+    def act(voter, rate_n, star_n):
+        u = voting[voter]
+        others = [n for n in NICKS if n != voter]
+        for n in others[:rate_n]:
+            num = number_of(client, u, f"Story {n}")
+            assert client.put(f"/api/voting/stories/{num}/rating", json=rating(4), headers=u).status_code == 200
+        for n in others[:star_n]:
+            num = number_of(client, u, f"Story {n}")
+            assert client.put(f"/api/voting/stories/{num}/star", headers=u).status_code == 200
+
+    act("alice", 4, 3)  # всё выполнено
+    act("bob", 4, 2)    # не раздал все звёзды
+    act("carol", 3, 3)  # оценил не все работы
+    act("dave", 0, 0)   # ничего
+    act("erin", 4, 3)   # всё выполнено
+    advance(client, admin, "results")
+
+    viewer = voting["alice"]
+    items = {i["author"]: i for i in client.get("/api/results/stories", headers=viewer).json()}
+    assert items["alice"]["violation"] is None and items["erin"]["violation"] is None
+    assert items["bob"]["violation"] == {"ratings": None, "stars": {"done": 2, "required": 3}}
+    assert items["carol"]["violation"] == {"ratings": {"done": 3, "required": 4}, "stars": None}
+    assert items["dave"]["violation"] == {"ratings": {"done": 0, "required": 4}, "stars": {"done": 0, "required": 3}}
+    # рассказ нарушителя остаётся доступным, с той же пометкой
+    story = client.get(f"/api/results/stories/{items['dave']['anon_number']}", headers=viewer).json()
+    assert story["violation"] == items["dave"]["violation"] and story["body"]
+    # в топы и к победителям нарушители не попадают, места остальных считаются без них
+    res = client.get("/api/results", headers=viewer).json()
+    for sc in res["scales"]:
+        assert {e["author"] for e in sc["ranking"]} <= {"alice", "erin"}
+    assert {e["author"] for e in next(sc for sc in res["scales"] if sc["key"] == "style")["ranking"]} == {"alice", "erin"}
+    stars = res["stars"]["ranking"]
+    assert [(e["author"], e["rank"]) for e in stars] == [("alice", 1)]
+    # а свои итоги нарушитель в кабинете видит, только без места
+    cab = client.get("/api/me/contests", headers=voting["carol"]).json()
+    d = client.get(f"/api/me/contests/{cab[0]['id']}", headers=voting["carol"]).json()
+    style = next(x for x in d["received"]["scales"] if x["key"] == "style")
+    assert style["value"] is not None and style["rank"] is None
+    assert d["received"]["violation"] == items["carol"]["violation"]
+
+
+def test_rules_public_editable_by_organizer_only(client, admin, make_user):
+    user = make_user("alice")
+
+    # читать правила можно без входа; пока не сохранены, отдаётся текст по умолчанию
+    r = client.get("/api/rules")
+    assert r.status_code == 200
+    default = r.json()
+    assert default["is_default"] is True and "Обязательное при оценивании" in default["body"]
+
+    # редактировать может только организатор
+    assert client.put("/api/admin/rules", json={"body": "<p>x</p>"}).status_code in (401, 403)
+    assert client.put("/api/admin/rules", json={"body": "<p>x</p>"}, headers=user).status_code == 403
+    assert client.delete("/api/admin/rules", headers=user).status_code == 403
+
+    # форматирование сохраняется, опасное вырезается
+    html = '<h2>Правила</h2><p onclick="x()"><strong>Важно</strong></p><script>alert(1)</script><ul><li>раз</li></ul>'
+    r = client.put("/api/admin/rules", json={"body": html}, headers=admin)
+    assert r.status_code == 200, r.text
+    assert r.json()["body"] == "<h2>Правила</h2><p><strong>Важно</strong></p><ul><li>раз</li></ul>"
+    pub = client.get("/api/rules").json()
+    assert pub["is_default"] is False and pub["body"] == r.json()["body"] and pub["updated_at"]
+
+    # лимит по видимому тексту; пустой текст допустим
+    assert client.put("/api/admin/rules", json={"body": "<p>" + "я" * 20_001 + "</p>"}, headers=admin).status_code == 422
+    assert client.put("/api/admin/rules", json={"body": ""}, headers=admin).json()["body"] == ""
+
+    # сброс к тексту по умолчанию
+    back = client.delete("/api/admin/rules", headers=admin).json()
+    assert back["is_default"] is True and back["body"] == default["body"]
+
+
 def test_disclaimer_shown_to_readers(client, admin, make_user):
     alice, bob = make_user("alice"), make_user("bob")
     start_contest(client, admin)
@@ -286,9 +368,11 @@ def test_organizer_cannot_see_authors_before_final(client, voting, admin):
 def test_anon_numbers_are_a_permutation(client, voting):
     seen = set()
     for n, user in voting.items():
-        own_titles = {i["title"] for i in client.get("/api/voting/stories", headers=user).json()["stories"]}
-        assert f"Story {n}" not in own_titles  # собственная работа в списке отсутствует
-        seen |= {number_of(client, user, t) for t in own_titles}
+        items = client.get("/api/voting/stories", headers=user).json()["stories"]
+        # в списке все пять работ без «дырок»; своя помечена и только она
+        assert sorted(i["anon_number"] for i in items) == [1, 2, 3, 4, 5]
+        assert [i["title"] for i in items if i["mine"]] == [f"Story {n}"]
+        seen |= {i["anon_number"] for i in items}
     assert seen == {1, 2, 3, 4, 5}
 
 
@@ -297,11 +381,18 @@ def test_anon_numbers_are_a_permutation(client, voting):
 
 def test_cannot_rate_or_star_own_story(client, voting):
     alice = voting["alice"]
-    # номер своей работы виден как «дырка» в списке; пробуем его
-    mine = ({1, 2, 3, 4, 5} - {i["anon_number"] for i in client.get("/api/voting/stories", headers=alice).json()["stories"]}).pop()
-    assert client.get(f"/api/voting/stories/{mine}", headers=alice).status_code == 403
+    mine = number_of(client, alice, "Story alice")
+    # свой рассказ можно прочитать, но в нём нет ничего оценочного
+    r = client.get(f"/api/voting/stories/{mine}", headers=alice)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["mine"] is True and body["title"] == "Story alice"
+    assert body["my_rating"] is None and body["my_review"] is None and body["my_survey"] is None and body["starred"] is False
+    # а оценивать, отмечать звездой, рецензировать и заполнять опросник нельзя
     assert client.put(f"/api/voting/stories/{mine}/rating", json=rating(5), headers=alice).status_code == 403
     assert client.put(f"/api/voting/stories/{mine}/star", headers=alice).status_code == 403
+    assert client.put(f"/api/voting/stories/{mine}/review", json={"body": "x"}, headers=alice).status_code == 403
+    assert client.put(f"/api/voting/stories/{mine}/survey", json={"genres": ["drama"]}, headers=alice).status_code == 403
 
 
 def test_rating_validation_and_update(client, voting):
@@ -343,7 +434,7 @@ def test_non_author_cannot_vote_when_rule_enabled(client, admin, make_user):
 # ---------- результаты ----------
 
 
-def test_results_tops_and_reveal(client, voting, admin):
+def test_results_tops_and_reveal(client, voting, admin, lenient):
     # bob: хорошо по слогу, alice: плохо; carol: 5 звёзд-голосов и т.д.
     def vote(voter, title, **scores):
         u = voting[voter]
@@ -424,7 +515,7 @@ def test_review_lifecycle_and_validation(client, voting):
 
 def test_cannot_review_own_story_or_outside_voting(client, voting, admin):
     alice = voting["alice"]
-    mine = ({1, 2, 3, 4, 5} - {i["anon_number"] for i in client.get("/api/voting/stories", headers=alice).json()["stories"]}).pop()
+    mine = number_of(client, alice, "Story alice")
     assert client.put(f"/api/voting/stories/{mine}/review", json={"body": "хвалю себя"}, headers=alice).status_code == 403
     assert client.put(f"/api/voting/stories/{mine}/review", json={"body": "x"}, headers=admin).status_code == 403
     n = number_of(client, alice, "Story bob")
@@ -475,7 +566,7 @@ def test_reviews_hidden_until_results_then_readable_and_anonymous(client, voting
 # ---------- личный кабинет ----------
 
 
-def test_cabinet_given_during_voting_and_received_after(client, voting, admin):
+def test_cabinet_given_during_voting_and_received_after(client, voting, admin, lenient):
     alice, bob = voting["alice"], voting["bob"]
     n_bob = number_of(client, alice, "Story bob")
     n_carol = number_of(client, alice, "Story carol")

@@ -57,6 +57,16 @@ class Contest(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class Setting(Base):
+    """Настройки сайта «ключ — значение». Пока одна: текст правил (key="rules", HTML после очистки)."""
+
+    __tablename__ = "settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class Story(Base):
     __tablename__ = "stories"
     __table_args__ = (
