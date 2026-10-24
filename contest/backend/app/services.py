@@ -182,8 +182,45 @@ def _aggregates(db: Session, contest: Contest):
     return stories, avg, stars
 
 
+def violations(db: Session, contest: Contest, stories: list[Story]) -> dict[int, dict]:
+    """Авторы, не выполнившие обязательное при оценивании: оценить ВСЕ чужие работы и раздать ВСЕ звёзды.
+
+    Ключ — id рассказа. Для нарушителя: {"ratings": {"done", "required"} | None, "stars": {...} | None},
+    где указано только то, что не выполнено. Если чужих работ меньше, чем звёзд, достаточно отметить каждую из них.
+    """
+    others = len(stories) - 1
+    if others <= 0:
+        return {}
+    rated = dict(
+        db.execute(
+            select(Rating.rater_id, func.count(Rating.id))
+            .join(Story, Story.id == Rating.story_id)
+            .where(Story.contest_id == contest.id)
+            .group_by(Rating.rater_id)
+        ).all()
+    )
+    starred = dict(
+        db.execute(
+            select(Star.giver_id, func.count(Star.id)).where(Star.contest_id == contest.id).group_by(Star.giver_id)
+        ).all()
+    )
+    need_stars = min(STARS_PER_USER, others)
+    out: dict[int, dict] = {}
+    for s in stories:
+        r, st = rated.get(s.author_id, 0), starred.get(s.author_id, 0)
+        miss_r, miss_s = r < others, st < need_stars
+        if miss_r or miss_s:
+            out[s.id] = {
+                "ratings": {"done": r, "required": others} if miss_r else None,
+                "stars": {"done": st, "required": need_stars} if miss_s else None,
+            }
+    return out
+
+
 def compute_results(db: Session, contest: Contest) -> dict:
     stories, avg, stars = _aggregates(db, contest)
+    # Нарушители правил оценивания в топы и к победителям не попадают (их работы остаются в «Все работы»).
+    viol = violations(db, contest, stories)
 
     scales = []
     for key, label, _ in SCALES:
@@ -196,7 +233,7 @@ def compute_results(db: Session, contest: Contest) -> dict:
                 "votes": avg[s.id]["votes"],
             }
             for s in stories
-            if s.id in avg
+            if s.id in avg and s.id not in viol
         ]
         scales.append({"key": key, "label": label, "ranking": _ranked(entries, True)})
 
@@ -209,7 +246,7 @@ def compute_results(db: Session, contest: Contest) -> dict:
             "votes": avg.get(s.id, {}).get("votes", 0),
         }
         for s in stories
-        if s.id in stars
+        if s.id in stars and s.id not in viol
     ]
     return {
         "scales": scales,
@@ -239,7 +276,7 @@ def story_reviews(db: Session, story: Story) -> list[dict]:
 
 
 def story_result(db: Session, contest: Contest, story: Story) -> dict:
-    _, avg, stars = _aggregates(db, contest)
+    all_stories, avg, stars = _aggregates(db, contest)
     a = avg.get(story.id)
     return {
         "anon_number": story.anon_number,
@@ -250,6 +287,7 @@ def story_result(db: Session, contest: Contest, story: Story) -> dict:
         "votes": a["votes"] if a else 0,
         "scores": {k: a[k] for k in SCALE_KEYS} if a else None,
         "stars": stars.get(story.id, 0),
+        "violation": violations(db, contest, all_stories).get(story.id),
         "reviews": story_reviews(db, story),
         "survey": survey_stats(db.scalars(select(Survey).where(Survey.story_id == story.id)).all()),
     }

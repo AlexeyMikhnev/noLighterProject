@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth.jsx";
 
 export default function Login() {
@@ -29,6 +29,9 @@ export default function Login() {
   return (
     <form className="card narrow" onSubmit={submit}>
       <h1>Вход</h1>
+      <p className="muted small">
+        Перед участием прочитайте <Link to="/rules">правила конкурса</Link>.
+      </p>
       <label>
         Email
         <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />

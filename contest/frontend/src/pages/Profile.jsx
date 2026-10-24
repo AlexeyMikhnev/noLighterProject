@@ -5,6 +5,7 @@ import { useAuth } from "../auth.jsx";
 import Reviews from "../components/Reviews.jsx";
 import Disclaimer from "../components/Disclaimer.jsx";
 import StoryBody from "../components/StoryBody.jsx";
+import Violation from "../components/Violation.jsx";
 
 const PHASE = { draft: "подготовка", submission: "приём работ", voting: "оценивание", results: "завершён" };
 
@@ -107,6 +108,10 @@ function DetailBody({ d, revealed }) {
           )}
           {d.received && (
             <>
+              <Violation violation={d.received.violation} />
+              {d.received.violation && (
+                <p className="muted small">Поэтому ваш рассказ не участвует в топах и без места среди победителей.</p>
+              )}
               <p className="muted small">
                 Оценок получено: {d.received.votes} · звёзд: {d.received.stars}
                 {d.received.stars_rank != null && ` (место в топе по звёздам: ${d.received.stars_rank})`}
@@ -142,6 +147,15 @@ function DetailBody({ d, revealed }) {
   );
 }
 
+/** Крупная кнопка возврата: маленькая ссылка в шапке на больших экранах легко теряется. */
+function BackToContest() {
+  return (
+    <Link to="/" className="back-btn">
+      ← Вернуться к конкурсу
+    </Link>
+  );
+}
+
 export default function Profile() {
   const { user } = useAuth();
   const [list, setList] = useState(null);
@@ -163,11 +177,18 @@ export default function Profile() {
         <p>Организатор в конкурсах не участвует, личного архива у него нет.</p>
       </div>
     );
-  if (error) return <p className="error">{error}</p>;
+  if (error)
+    return (
+      <>
+        <BackToContest />
+        <p className="error">{error}</p>
+      </>
+    );
   if (!list) return <p className="center">Загрузка…</p>;
 
   return (
     <>
+      <BackToContest />
       <h1>Личный кабинет</h1>
       <p className="muted">
         {user.nickname} · архив ваших участий. Полученные оценки и рецензии открываются после итогов конкурса;
@@ -205,6 +226,9 @@ export default function Profile() {
           <section className="card reader">{selected && <Detail id={selected} />}</section>
         </div>
       )}
+      <div className="row">
+        <BackToContest />
+      </div>
     </>
   );
 }

@@ -5,6 +5,7 @@ import Reviews from "../components/Reviews.jsx";
 import Disclaimer from "../components/Disclaimer.jsx";
 import StoryBody from "../components/StoryBody.jsx";
 import SurveyStats from "../components/SurveyStats.jsx";
+import Violation, { violationText } from "../components/Violation.jsx";
 
 function fmt(v, isStars) {
   return isStars ? String(v) : v.toFixed(2);
@@ -93,10 +94,18 @@ export default function Results({ contest }) {
             </thead>
             <tbody>
               {all.map((e) => (
-                <tr key={e.anon_number} onClick={() => setOpen(open === e.anon_number ? null : e.anon_number)}>
+                <tr
+                  key={e.anon_number}
+                  className={e.violation ? "violator" : ""}
+                  title={e.violation ? `Нарушил правила: ${violationText(e.violation)}` : undefined}
+                  onClick={() => setOpen(open === e.anon_number ? null : e.anon_number)}
+                >
                   <td>{e.anon_number}</td>
                   <td>{e.title}</td>
-                  <td>{e.author}</td>
+                  <td>
+                    {e.author}
+                    {e.violation && <span className="violator-mark"> ⚠</span>}
+                  </td>
                   <td className="num">{e.words}</td>
                   <td className="num">{e.reviews}</td>
                 </tr>
@@ -138,11 +147,13 @@ export default function Results({ contest }) {
       )}
       <p className="muted small">
         Нажмите на строку, чтобы прочитать рассказ, увидеть его оценки и рецензии. Рецензенты остаются анонимными.
+        Красным отмечены авторы, не выполнившие обязательное при оценивании (оценить все чужие работы и раздать все
+        звёзды): их работы можно читать, но в топах и среди победителей их нет.
         Свои оценки и рецензии, а также архив прошлых конкурсов, ищите в <Link to="/profile">личном кабинете</Link>.
       </p>
 
       {story && (
-        <section className="result-story">
+        <section className={story.violation ? "result-story violator" : "result-story"}>
           <div className="eyebrow">
             №{story.anon_number} · автор: {story.author}
           </div>
@@ -152,6 +163,7 @@ export default function Results({ contest }) {
             {story.scores &&
               " · " + contest.scales.map((s) => `${s.label}: ${story.scores[s.key].toFixed(2)}`).join(" · ")}
           </p>
+          <Violation violation={story.violation} />
           <Disclaimer text={story.disclaimer} />
           <StoryBody html={story.body} />
           <SurveyStats stats={story.survey} title="Опросник читателей: этот рассказ" />

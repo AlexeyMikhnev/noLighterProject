@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import config
 from .db import init_db
-from .routers import admin, auth, contest, me, results, stories, voting
+from .routers import admin, auth, contest, me, results, rules, stories, voting
 
 
 @asynccontextmanager
@@ -19,7 +19,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Писательский конкурс", lifespan=lifespan)
+app = FastAPI(title="Негрелочка", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.CORS_ORIGINS,
@@ -27,7 +27,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for r in (auth, contest, stories, voting, results, me, admin):
+for r in (auth, contest, stories, voting, results, me, admin, rules):
     app.include_router(r.router)
 
 # Если фронтенд собран (npm run build), отдаём его же из FastAPI.
