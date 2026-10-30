@@ -13,8 +13,8 @@ from sqlalchemy.orm import Session, selectinload
 from ..config import SCALE_KEYS, SCALES
 from ..db import get_db
 from ..deps import require_participant
-from ..models import Contest, Rating, Review, Star, Story, User
-from ..services import compute_results, story_result
+from ..models import Contest, Guess, Rating, Review, Star, Story, User
+from ..services import compute_results, my_detective_result, row_points, story_result
 from ..services_time import iso
 
 router = APIRouter(prefix="/api/me", tags=["me"])
@@ -49,7 +49,7 @@ def _given(db: Session, contest: Contest, user: User) -> list[dict]:
     if not ids:
         return []
     stories = db.scalars(
-        select(Story).where(Story.id.in_(ids)).options(selectinload(Story.author)).order_by(Story.anon_number)
+        select(Story).where(Story.id.in_(list(ids))).options(selectinload(Story.author)).order_by(Story.anon_number)
     ).all()
     reveal = contest.phase == "results"
     out = []
@@ -87,7 +87,43 @@ def _participated(db: Session, contest: Contest, user: User) -> bool:
             .limit(1)
         )
         is not None
+        or db.scalar(select(Guess.id).where(Guess.contest_id == contest.id, Guess.guesser_id == user.id).limit(1))
+        is not None
     )
+
+
+def _guess_section(db: Session, contest: Contest, user: User) -> dict | None:
+    """Моя угадайка: что я отмечал; верность и очки только в фазе results."""
+    rows = db.execute(
+        select(Guess.story_id, Guess.guessed_user_id).where(Guess.contest_id == contest.id, Guess.guesser_id == user.id)
+    ).all()
+    if not rows:
+        return None
+    marks: dict[int, set[int]] = {}
+    for story_id, guessed_id in rows:
+        marks.setdefault(story_id, set()).add(guessed_id)
+    nicks = dict(db.execute(select(User.id, User.nickname).where(User.id.in_(list({g for _, g in rows})))).all())
+    stories = db.scalars(
+        select(Story).where(Story.id.in_(list(marks))).options(selectinload(Story.author)).order_by(Story.anon_number)
+    ).all()
+    reveal = contest.phase == "results"
+    out = []
+    for s in stories:
+        pts = row_points(s.author_id, marks[s.id])
+        out.append(
+            {
+                "anon_number": s.anon_number,
+                "title": s.title,
+                "marked": sorted((nicks[u] for u in marks[s.id]), key=str.lower),
+                "author": s.author.nickname if reveal else None,
+                "hit": bool(pts) if reveal else None,
+                "points": round(float(pts), 2) if reveal else None,
+            }
+        )
+    result = None
+    if reveal:
+        result = my_detective_result(db, contest, user)
+    return {"rows": out, "result": result}
 
 
 @router.get("/contests")
@@ -111,6 +147,11 @@ def my_contests(user: User = Depends(require_participant), db: Session = Depends
                     "ratings": sum(1 for g in given if g["rating"]),
                     "stars": sum(1 for g in given if g["starred"]),
                     "reviews": sum(1 for g in given if g["review"]),
+                    "guesses": len(
+                        db.scalars(
+                            select(Guess.story_id).where(Guess.contest_id == c.id, Guess.guesser_id == user.id).distinct()
+                        ).all()
+                    ),
                 },
             }
         )
@@ -142,6 +183,7 @@ def _received(db: Session, contest: Contest, story: Story) -> dict:
         "stars_rank": star_entry["rank"] if star_entry else None,
         "violation": mine["violation"],
         "reviews": mine["reviews"],
+        "guessed_by": mine["guessed"],
     }
 
 
@@ -174,4 +216,5 @@ def my_contest(contest_id: int, user: User = Depends(require_participant), db: S
         "received": _received(db, contest, story) if (story and results_open) else None,
         "received_hidden": bool(story) and not results_open,
         "given": _given(db, contest, user),
+        "guess": _guess_section(db, contest, user),
     }
