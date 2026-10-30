@@ -70,12 +70,12 @@ npm run dev                              # http://localhost:5173, /api прок�
 ```
 backend/app/
   config.py     настройки, пять шкал и число звёзд (менять шкалы тут + колонки в models.Rating)
-  models.py     User, Invite, Contest, Story, Rating, Star, Review
+  models.py     User, Invite, Contest, Story, Rating, Star, Review, Survey, Guess
   services.py   смена фаз, случайные номера, подсчёт топов
   deps.py       авторизация, роли, require_phase(...)  ← проверка фазы на сервере
-  routers/      auth, contest, stories, voting, results, me (личный кабинет), admin
-backend/tests/  фазы, анонимность, звёзды, рецензии, личный кабинет, топы, инвайты
-frontend/src/   pages/{Login,Register,Home,Submission,Voting,Results,Profile,Admin}.jsx
+  routers/      auth, contest, stories, voting, results, guess (угадайка), me (личный кабинет), admin
+backend/tests/  фазы, анонимность, звёзды, рецензии, угадайка, личный кабинет, топы, инвайты
+frontend/src/   pages/{Login,Register,Home,Submission,Voting,Results,Guess,Profile,Admin}.jsx
 ```
 
 ## API
@@ -93,7 +93,9 @@ frontend/src/   pages/{Login,Register,Home,Submission,Voting,Results,Profile,Adm
 | `PUT/DELETE /api/admin/rules` `{body}` (HTML из редактора, очищается по белому списку; до 20 000 знаков; DELETE возвращает стандартный текст) | любая | организатор |
 | `PUT /api/voting/stories/{n}/survey` (опросник для статистики: жанры, сеттинги, пол героя, 4 вопроса да/нет; всё необязательно, пустой = удалить; на оценки не влияет) | voting | участник |
 | `PUT/DELETE /api/voting/stories/{n}/review` `{body}` (1–5000 символов, одна на рассказ) | voting | участник |
-| `GET /api/results`, `GET /api/results/stories` (все работы), `GET /api/results/stories/{n}` (с рецензиями) | results | все |
+| `GET /api/guess` (матрица: рассказы × ники, мои отметки; в `results` ещё правда и мои очки) | voting, results | участник |
+| `PUT /api/guess/stories/{n}` `{nicknames:[...]}` (заменяет все отметки строки, пустой список снимает) | voting | участник |
+| `GET /api/results` (с номинацией `detective`), `GET /api/results/stories` (все работы), `GET /api/results/stories/{n}` (с рецензиями) | results | все |
 | `GET /api/me/contests` (архив участий), `GET /api/me/contests/{id}` (рассказ, полученное, отданное) | любая | участник |
 | `POST/PATCH /api/admin/contest`, `POST /api/admin/contest/advance` | | организатор |
 | `GET /api/admin/stats`, `GET/POST/DELETE /api/admin/invites` | | организатор |
@@ -107,6 +109,15 @@ frontend/src/   pages/{Login,Register,Home,Submission,Voting,Results,Profile,Adm
 - **Рецензии**: пишутся только в фазе `voting` на чужие рассказы, читаются только в `results`. Автор рецензии
   не раскрывается **никогда**, даже в финале: в ответах только `body` (без id и времени), порядок рецензий
   перемешан. `reviewer_id` в базе нужен лишь для правки/удаления своей рецензии и показа её в кабинете.
+- **Угадайка** (`/guess`, необязательна): матрица «рассказ × возможный автор» с закреплёнными заголовками. В строке можно
+  отметить нескольких, за верный ответ дают 1/k балла (k — число отметок в строке). Сервер **не сообщает верность отметок
+  до `results`** (иначе перебором можно вычислить всех авторов); в ответах фазы `voting` нет связи «рассказ → автор»,
+  только алфавитный список приславших и собственные отметки читателя. Номинация «Лучший детектив» считается точными дробями,
+  места общие (1, 2, 2, 4), в рейтинге только те, кто что-то отметил. Один и тот же ник в нескольких строках разрешён,
+  интерфейс лишь предупреждает: у каждого участника один рассказ.
+  Угадайка необязательна и **не входит в обязательное оценивание**: не игравший никогда не становится нарушителем,
+  а сама игра нарушителем не делает. Нарушители правил оценивания (см. выше) в «Лучшем детективе» вне зачёта, как и их
+  рассказы в топах: перечислены отдельно, без места.
 - **Личный кабинет** (`/api/me/...`): чужие работы там только под анонимными номерами, псевдонимы авторов
   добавляются лишь для конкурсов в `results`; то, что получил ваш рассказ (оценки, места, звёзды, рецензии),
   скрыто до финала. Организатору кабинет недоступен.

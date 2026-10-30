@@ -115,6 +115,8 @@ function DetailBody({ d, revealed }) {
               <p className="muted small">
                 Оценок получено: {d.received.votes} · звёзд: {d.received.stars}
                 {d.received.stars_rank != null && ` (место в топе по звёздам: ${d.received.stars_rank})`}
+                {d.received.guessed_by.guessers > 0 &&
+                  ` · автора вашего рассказа назвали верно ${d.received.guessed_by.hits} из ${d.received.guessed_by.guessers} игравших в угадайку`}
               </p>
               <table className="ranking static">
                 <thead>
@@ -143,6 +145,42 @@ function DetailBody({ d, revealed }) {
       <hr />
       <h3>Мои оценки и рецензии</h3>
       <Given items={d.given} scales={labels} revealed={revealed} />
+
+      {d.guess && (
+        <>
+          <hr />
+          <h3>Моя угадайка</h3>
+          {revealed && d.guess.result && (
+            <p className="muted small">
+              Очки: <b>{String(d.guess.result.value).replace(".", ",")}</b> ·{" "}
+              {d.guess.result.excluded ? "вне зачёта (не выполнено обязательное оценивание)" : `место ${d.guess.result.rank}`} ·
+              верных строк {d.guess.result.hits} из {d.guess.result.marked}
+            </p>
+          )}
+          <table className="ranking static">
+            <thead>
+              <tr>
+                <th>№</th>
+                <th>Рассказ</th>
+                <th>Мои отметки</th>
+                {revealed && <th>Автор</th>}
+                {revealed && <th className="num">Очки</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {d.guess.rows.map((r) => (
+                <tr key={r.anon_number} className={r.hit ? "first" : ""}>
+                  <td>{r.anon_number}</td>
+                  <td>{r.title}</td>
+                  <td>{r.marked.join(", ")}</td>
+                  {revealed && <td>{r.author}</td>}
+                  {revealed && <td className="num">{r.hit ? "+" + String(r.points).replace(".", ",") : "0"}</td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
     </>
   );
 }

@@ -1,11 +1,12 @@
 """Бизнес-логика: фазы конкурса, подсчёт топов."""
 import random
+from fractions import Fraction
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from .config import SCALE_KEYS, SCALES, STARS_PER_USER, SURVEY, SURVEY_BOOL_KEYS
-from .models import Contest, Rating, Review, Star, Story, Survey, User
+from .models import Contest, Guess, Rating, Review, Star, Story, Survey, User
 from .services_time import iso, utcnow
 
 PHASES = ["draft", "submission", "voting", "results"]
@@ -217,6 +218,90 @@ def violations(db: Session, contest: Contest, stories: list[Story]) -> dict[int,
     return out
 
 
+# ---------- угадайка ----------
+
+
+def _guess_rows(db: Session, contest: Contest) -> dict[tuple[int, int], set[int]]:
+    """{(guesser_id, story_id): {guessed_user_id, ...}} — все отметки конкурса."""
+    rows: dict[tuple[int, int], set[int]] = {}
+    for guesser_id, story_id, guessed_id in db.execute(
+        select(Guess.guesser_id, Guess.story_id, Guess.guessed_user_id).where(Guess.contest_id == contest.id)
+    ):
+        rows.setdefault((guesser_id, story_id), set()).add(guessed_id)
+    return rows
+
+
+def row_points(author_id: int, marks: set[int]) -> Fraction:
+    """Очки за одну строку: верно отмеченный автор делит 1 балл на число отметок в строке."""
+    return Fraction(1, len(marks)) if marks and author_id in marks else Fraction(0)
+
+
+def compute_detective(db: Session, contest: Contest, stories: list[Story] | None = None) -> dict:
+    """Номинация «Лучший детектив»: сумма очков за угаданных авторов.
+
+    В рейтинге только те, кто сделал хотя бы одну отметку: угадайка необязательна, и не игравший
+    нигде не фигурирует и не может стать «нарушителем» из-за неё. Сама угадайка никого нарушителем
+    не делает и не засчитывается в обязательное оценивание.
+
+    Нарушители правил оценивания (см. `violations`) в зачёт номинации не входят, как и их рассказы
+    в топах: они перечислены отдельно в `excluded` без мест. Равные очки делят место (1, 2, 2, 4).
+    Считается точными дробями, чтобы 1/3 + 1/3 + 1/3 равнялось ровно единице.
+    """
+    if stories is None:
+        stories = db.scalars(
+            select(Story).where(Story.contest_id == contest.id, Story.anon_number.is_not(None))
+        ).all()
+    authors = {s.id: s.author_id for s in stories}
+    violator_ids = {s.author_id for s in stories if s.id in violations(db, contest, stories)}
+    per: dict[int, dict] = {}
+    for (guesser_id, story_id), marks in _guess_rows(db, contest).items():
+        p = per.setdefault(guesser_id, {"score": Fraction(0), "marked": 0, "hits": 0})
+        p["marked"] += 1
+        pts = row_points(authors.get(story_id, -1), marks)
+        if pts:
+            p["hits"] += 1
+            p["score"] += pts
+    nicks = {}
+    if per:
+        nicks = dict(db.execute(select(User.id, User.nickname).where(User.id.in_(list(per)))).all())
+    ordered = sorted(per.items(), key=lambda kv: (-kv[1]["score"], nicks[kv[0]].lower()))
+
+    def row(uid: int, p: dict) -> dict:
+        return {"nickname": nicks[uid], "value": round(float(p["score"]), 2), "marked": p["marked"], "hits": p["hits"]}
+
+    ranking, excluded, rank, prev, pos = [], [], 0, None, 0
+    for uid, p in ordered:
+        if uid in violator_ids:
+            excluded.append(row(uid, p))
+            continue
+        pos += 1
+        if p["score"] != prev:
+            rank, prev = pos, p["score"]
+        ranking.append({"rank": rank, **row(uid, p)})
+    return {"ranking": ranking, "excluded": excluded}
+
+
+def my_detective_result(db: Session, contest: Contest, user: User) -> dict | None:
+    """Мой итог в «угадайке»: {rank, nickname, value, marked, hits}; для нарушителя rank=None и excluded=True.
+    None, если я ничего не отмечал."""
+    det = compute_detective(db, contest)
+    mine = next((e for e in det["ranking"] if e["nickname"] == user.nickname), None)
+    if mine:
+        return {**mine, "excluded": False}
+    out = next((e for e in det["excluded"] if e["nickname"] == user.nickname), None)
+    return {**out, "rank": None, "excluded": True} if out else None
+
+
+def story_guess_stats(db: Session, contest: Contest, story: Story) -> dict:
+    """Сколько читателей отметили кого-то у этого рассказа и у скольких среди отметок был настоящий автор."""
+    guessers = hits = 0
+    for (_, story_id), marks in _guess_rows(db, contest).items():
+        if story_id == story.id:
+            guessers += 1
+            hits += story.author_id in marks
+    return {"guessers": guessers, "hits": hits}
+
+
 def compute_results(db: Session, contest: Contest) -> dict:
     stories, avg, stars = _aggregates(db, contest)
     # Нарушители правил оценивания в топы и к победителям не попадают (их работы остаются в «Все работы»).
@@ -251,6 +336,7 @@ def compute_results(db: Session, contest: Contest) -> dict:
     return {
         "scales": scales,
         "stars": {"ranking": _ranked(star_entries, False)},
+        "detective": compute_detective(db, contest, stories),
         "totals": {
             "stories": len(stories),
             "ratings": sum(a["votes"] for a in avg.values()),
@@ -289,5 +375,6 @@ def story_result(db: Session, contest: Contest, story: Story) -> dict:
         "stars": stars.get(story.id, 0),
         "violation": violations(db, contest, all_stories).get(story.id),
         "reviews": story_reviews(db, story),
+        "guessed": story_guess_stats(db, contest, story),
         "survey": survey_stats(db.scalars(select(Survey).where(Survey.story_id == story.id)).all()),
     }
