@@ -47,6 +47,9 @@ export default function Register() {
   return (
     <form className="card narrow" onSubmit={submit}>
       <h1>Регистрация</h1>
+      <p className="muted small">
+        Регистрируясь, вы соглашаетесь с <Link to="/rules">правилами конкурса</Link>.
+      </p>
       <p className="muted">
         Псевдоним будет скрыт от других участников до публикации результатов.
       </p>

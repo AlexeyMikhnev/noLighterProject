@@ -7,7 +7,7 @@ from ..db import get_db
 from ..deps import get_current_user, require_phase
 from ..models import Contest, Review, Story, User
 from ..richtext import word_count
-from ..services import compute_results, story_result
+from ..services import compute_results, story_result, violations
 
 router = APIRouter(prefix="/api/results", tags=["results"])
 
@@ -42,6 +42,7 @@ def all_stories(
         .options(selectinload(Story.author))
         .order_by(Story.anon_number)
     ).all()
+    viol = violations(db, contest, stories)
     return [
         {
             "anon_number": s.anon_number,
@@ -49,6 +50,7 @@ def all_stories(
             "author": s.author.nickname,
             "words": word_count(s.body),
             "reviews": counts.get(s.id, 0),
+            "violation": viol.get(s.id),
         }
         for s in stories
     ]

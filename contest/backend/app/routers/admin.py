@@ -8,8 +8,9 @@ from sqlalchemy.orm import Session, selectinload
 
 from ..db import get_db
 from ..deps import require_organizer
-from ..models import Contest, Invite, Rating, Review, Star, Story, User
-from ..schemas import ContestCreateIn, ContestPatchIn, InvitesIn
+from ..models import Contest, Invite, Rating, Review, Setting, Star, Story, User
+from ..routers.rules import KEY as RULES_KEY, rules_out
+from ..schemas import ContestCreateIn, ContestPatchIn, InvitesIn, RulesIn
 from ..services import advance, contest_to_dict, current_contest
 from ..services_time import iso, utcnow
 
@@ -158,3 +159,25 @@ def delete_invite(token: str, db: Session = Depends(get_db)):
         raise HTTPException(409, "Приглашение уже использовано")
     db.delete(invite)
     db.commit()
+
+
+@router.put("/rules")
+def put_rules(data: RulesIn, db: Session = Depends(get_db)):
+    """Сохранить текст правил (HTML очищается при разборе RulesIn). Пустой текст = правила не опубликованы."""
+    row = db.get(Setting, RULES_KEY)
+    if row is None:
+        db.add(Setting(key=RULES_KEY, value=data.body, updated_at=utcnow()))
+    else:
+        row.value, row.updated_at = data.body, utcnow()
+    db.commit()
+    return rules_out(db)
+
+
+@router.delete("/rules")
+def reset_rules(db: Session = Depends(get_db)):
+    """Вернуть текст правил по умолчанию."""
+    row = db.get(Setting, RULES_KEY)
+    if row is not None:
+        db.delete(row)
+        db.commit()
+    return rules_out(db)

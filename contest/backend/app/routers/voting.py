@@ -29,13 +29,14 @@ def voter(
     return user, contest
 
 
-def _story(db: Session, contest: Contest, user: User, anon_number: int) -> Story:
+def _story(db: Session, contest: Contest, user: User, anon_number: int, allow_own: bool = False) -> Story:
+    """Рассказ по номеру. Свой рассказ можно только читать (allow_own), оценивать, отмечать и рецензировать нельзя."""
     story = db.scalar(
         select(Story).where(Story.contest_id == contest.id, Story.anon_number == anon_number)
     )
     if not story:
         raise HTTPException(404, "Рассказ не найден")
-    if story.author_id == user.id:
+    if story.author_id == user.id and not allow_own:
         raise HTTPException(403, "Нельзя оценивать собственный рассказ")
     return story
 
@@ -51,8 +52,9 @@ def _rating_dict(r: Rating | None) -> dict | None:
     return {k: getattr(r, k) for k in SCALE_KEYS} if r else None
 
 
-def _item(s: Story, rating: Rating | None, starred: bool, reviewed: bool = False) -> dict:
+def _item(s: Story, rating: Rating | None, starred: bool, reviewed: bool = False, mine: bool = False) -> dict:
     return {
+        "mine": mine,
         "anon_number": s.anon_number,
         "title": s.title,
         "words": word_count(s.body),
@@ -75,7 +77,7 @@ def list_stories(ctx=Depends(voter), db: Session = Depends(get_db)):
     user, contest = ctx
     stories = db.scalars(
         select(Story)
-        .where(Story.contest_id == contest.id, Story.author_id != user.id)
+        .where(Story.contest_id == contest.id)
         .order_by(Story.anon_number)
     ).all()
     ratings = {
@@ -88,7 +90,11 @@ def list_stories(ctx=Depends(voter), db: Session = Depends(get_db)):
     )
     reviewed = set(db.scalars(select(Review.story_id).where(Review.reviewer_id == user.id)).all())
     return {
-        "stories": [_item(s, ratings.get(s.id), s.id in starred, s.id in reviewed) for s in stories],
+        # Свой рассказ тоже в списке (с пометкой mine): иначе его номер выдавала бы «дырка» в нумерации.
+        "stories": [
+            _item(s, ratings.get(s.id), s.id in starred, s.id in reviewed, mine=s.author_id == user.id)
+            for s in stories
+        ],
         "stars_total": STARS_PER_USER,
         "stars_left": _stars_left(db, contest, user),
     }
@@ -97,10 +103,24 @@ def list_stories(ctx=Depends(voter), db: Session = Depends(get_db)):
 @router.get("/stories/{anon_number}")
 def read_story(anon_number: int, ctx=Depends(voter), db: Session = Depends(get_db)):
     user, contest = ctx
-    s = _story(db, contest, user, anon_number)
+    s = _story(db, contest, user, anon_number, allow_own=True)
+    if s.author_id == user.id:
+        # Свой рассказ: только чтение, без оценок, звезды, рецензии и опросника.
+        return {
+            "mine": True,
+            "anon_number": s.anon_number,
+            "title": s.title,
+            "body": s.body,
+            "disclaimer": s.disclaimer,
+            "my_rating": None,
+            "starred": False,
+            "my_review": None,
+            "my_survey": None,
+        }
     rating = db.scalar(select(Rating).where(Rating.story_id == s.id, Rating.rater_id == user.id))
     starred = db.scalar(select(Star.id).where(Star.story_id == s.id, Star.giver_id == user.id))
     return {
+        "mine": False,
         "anon_number": s.anon_number,
         "title": s.title,
         "body": s.body,

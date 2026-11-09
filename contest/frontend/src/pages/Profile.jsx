@@ -5,6 +5,7 @@ import { useAuth } from "../auth.jsx";
 import Reviews from "../components/Reviews.jsx";
 import Disclaimer from "../components/Disclaimer.jsx";
 import StoryBody from "../components/StoryBody.jsx";
+import Violation from "../components/Violation.jsx";
 
 const PHASE = { draft: "подготовка", submission: "приём работ", voting: "оценивание", results: "завершён" };
 
@@ -107,9 +108,15 @@ function DetailBody({ d, revealed }) {
           )}
           {d.received && (
             <>
+              <Violation violation={d.received.violation} />
+              {d.received.violation && (
+                <p className="muted small">Поэтому ваш рассказ не участвует в топах и без места среди победителей.</p>
+              )}
               <p className="muted small">
                 Оценок получено: {d.received.votes} · звёзд: {d.received.stars}
                 {d.received.stars_rank != null && ` (место в топе по звёздам: ${d.received.stars_rank})`}
+                {d.received.guessed_by.guessers > 0 &&
+                  ` · автора вашего рассказа назвали верно ${d.received.guessed_by.hits} из ${d.received.guessed_by.guessers} игравших в угадайку`}
               </p>
               <table className="ranking static">
                 <thead>
@@ -138,7 +145,52 @@ function DetailBody({ d, revealed }) {
       <hr />
       <h3>Мои оценки и рецензии</h3>
       <Given items={d.given} scales={labels} revealed={revealed} />
+
+      {d.guess && (
+        <>
+          <hr />
+          <h3>Моя угадайка</h3>
+          {revealed && d.guess.result && (
+            <p className="muted small">
+              Очки: <b>{String(d.guess.result.value).replace(".", ",")}</b> ·{" "}
+              {d.guess.result.excluded ? "вне зачёта (не выполнено обязательное оценивание)" : `место ${d.guess.result.rank}`} ·
+              верных строк {d.guess.result.hits} из {d.guess.result.marked}
+            </p>
+          )}
+          <table className="ranking static">
+            <thead>
+              <tr>
+                <th>№</th>
+                <th>Рассказ</th>
+                <th>Мои отметки</th>
+                {revealed && <th>Автор</th>}
+                {revealed && <th className="num">Очки</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {d.guess.rows.map((r) => (
+                <tr key={r.anon_number} className={r.hit ? "first" : ""}>
+                  <td>{r.anon_number}</td>
+                  <td>{r.title}</td>
+                  <td>{r.marked.join(", ")}</td>
+                  {revealed && <td>{r.author}</td>}
+                  {revealed && <td className="num">{r.hit ? "+" + String(r.points).replace(".", ",") : "0"}</td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
     </>
+  );
+}
+
+/** Крупная кнопка возврата: маленькая ссылка в шапке на больших экранах легко теряется. */
+function BackToContest() {
+  return (
+    <Link to="/" className="back-btn">
+      ← Вернуться к конкурсу
+    </Link>
   );
 }
 
@@ -163,11 +215,18 @@ export default function Profile() {
         <p>Организатор в конкурсах не участвует, личного архива у него нет.</p>
       </div>
     );
-  if (error) return <p className="error">{error}</p>;
+  if (error)
+    return (
+      <>
+        <BackToContest />
+        <p className="error">{error}</p>
+      </>
+    );
   if (!list) return <p className="center">Загрузка…</p>;
 
   return (
     <>
+      <BackToContest />
       <h1>Личный кабинет</h1>
       <p className="muted">
         {user.nickname} · архив ваших участий. Полученные оценки и рецензии открываются после итогов конкурса;
@@ -205,6 +264,9 @@ export default function Profile() {
           <section className="card reader">{selected && <Detail id={selected} />}</section>
         </div>
       )}
+      <div className="row">
+        <BackToContest />
+      </div>
     </>
   );
 }

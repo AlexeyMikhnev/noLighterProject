@@ -8,13 +8,21 @@ import SurveyForm, { emptySurvey, normSurvey } from "../components/SurveyForm.js
 
 const MAX_REVIEW = 5000;
 const HIDE_KEY = "voting:hideRated";
+const HIDE_TEXT_KEY = "voting:hideText";
 
-function loadHide() {
+// Переключатели интерфейса помним в браузере; localStorage может быть недоступен.
+function loadFlag(key) {
   try {
-    return localStorage.getItem(HIDE_KEY) === "1";
+    return localStorage.getItem(key) === "1";
   } catch {
     return false;
   }
+}
+
+function saveFlag(key, on) {
+  try {
+    localStorage.setItem(key, on ? "1" : "0");
+  } catch {}
 }
 
 export default function Voting({ contest, reload }) {
@@ -31,7 +39,9 @@ export default function Voting({ contest, reload }) {
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const [hideRated, setHideRated] = useState(loadHide);
+  const [hideRated, setHideRated] = useState(() => loadFlag(HIDE_KEY));
+  // Свёрнутый текст остаётся свёрнутым и у следующих рассказов: удобно быстро проставлять оценки и звёзды.
+  const [hideText, setHideText] = useState(() => loadFlag(HIDE_TEXT_KEY));
 
   const loadList = useCallback(async () => {
     try {
@@ -164,12 +174,17 @@ export default function Voting({ contest, reload }) {
 
   const toggleHide = (on) => {
     setHideRated(on);
-    try {
-      localStorage.setItem(HIDE_KEY, on ? "1" : "0");
-    } catch {}
+    saveFlag(HIDE_KEY, on);
   };
 
-  const rated = list.filter((i) => i.rated).length;
+  const toggleText = () => {
+    setHideText(!hideText);
+    saveFlag(HIDE_TEXT_KEY, !hideText);
+  };
+
+  // Счётчики считаем по чужим работам: свой рассказ в списке есть, но оценить его нельзя.
+  const others = list.filter((i) => !i.mine);
+  const rated = others.filter((i) => i.rated).length;
   // Открытый рассказ не прячем, даже если только что его оценили: иначе он «убежит» из списка под рукой.
   const visible = hideRated ? list.filter((i) => !i.rated || i.anon_number === selected) : list;
   const total = contest.stars_total;
@@ -180,7 +195,7 @@ export default function Voting({ contest, reload }) {
         <h2>Работы</h2>
         <Deadline iso={contest.voting_ends_at} label="Оценивание" />
         <p>
-          Оценено <strong>{rated}</strong> из {list.length}
+          Оценено <strong>{rated}</strong> из {others.length}
         </p>
         <p className="stars-left" title="Каждой звездой можно отметить один рассказ">
           {Array.from({ length: total }, (_, i) => (
@@ -190,14 +205,14 @@ export default function Voting({ contest, reload }) {
           ))}
           <span className="muted small"> осталось {starsLeft} из {total}</span>
         </p>
-        <p className="muted small">Авторы скрыты до публикации результатов. Свой рассказ вы тут не увидите.</p>
+        <p className="muted small">Авторы скрыты до публикации результатов. Ваш рассказ тоже в списке, под общим номером: его можно прочитать, но не оценить.</p>
         {list.length > 0 && (
           <label className="inline check">
             <input type="checkbox" checked={hideRated} onChange={(e) => toggleHide(e.target.checked)} /> Скрыть оценённое
           </label>
         )}
-        {list.length === 0 && <p>Пока нет рассказов для оценки.</p>}
-        {list.length > 0 && visible.length === 0 && <p className="muted">Все работы оценены.</p>}
+        {others.length === 0 && <p>Пока нет чужих рассказов для оценки.</p>}
+        {hideRated && others.length > 0 && visible.every((i) => i.mine) && <p className="muted">Все работы оценены.</p>}
         <ul className="story-list">
           {visible.map((i) => (
             <li key={i.anon_number}>
@@ -205,9 +220,10 @@ export default function Voting({ contest, reload }) {
                 <span className="num">№{i.anon_number}</span>
                 <span className="t">{i.title}</span>
                 <span className="meta">
+                  {i.mine && <span className="mine-badge">ваш</span>}
                   {i.reviewed && <span title="Есть ваша рецензия">✎</span>}
                   {i.starred && <span className="star on">★</span>}
-                  {i.rated ? <span className="ok">✓</span> : <span className="muted">·</span>}
+                  {!i.mine && (i.rated ? <span className="ok">✓</span> : <span className="muted">·</span>)}
                 </span>
               </button>
             </li>
@@ -220,11 +236,30 @@ export default function Voting({ contest, reload }) {
         {selected && !story && <p className="muted">Загрузка…</p>}
         {story && (
           <>
-            <div className="eyebrow">Рассказ №{story.anon_number}</div>
-            <h2>{story.title}</h2>
+            <div className="eyebrow">Рассказ №{story.anon_number}{story.mine && " · ваш"}</div>
+            <div className="row between">
+              <h2>{story.title}</h2>
+              <button type="button" aria-expanded={!hideText} onClick={toggleText}>
+                {hideText ? "Показать текст" : "Скрыть текст"}
+              </button>
+            </div>
             <Disclaimer text={story.disclaimer} />
-            <StoryBody html={story.body} />
+            {hideText ? (
+              <p className="muted small">Текст рассказа скрыт. Нажмите «Показать текст», чтобы прочитать.</p>
+            ) : (
+              <StoryBody html={story.body} />
+            )}
 
+            {story.mine ? (
+              <>
+                <hr />
+                <p className="muted">
+                  Это ваш рассказ. Его можно перечитать здесь, но оценить, отметить звездой, прорецензировать или
+                  заполнить опросник нельзя. Оценки и рецензии вы увидите в финале.
+                </p>
+              </>
+            ) : (
+              <>
             <hr />
             <h3>Ваша оценка</h3>
             {scales.map((s) => (
@@ -303,6 +338,8 @@ export default function Voting({ contest, reload }) {
                   )}
                 </div>
                 {surveyNote && <p className="note">{surveyNote}</p>}
+              </>
+            )}
               </>
             )}
           </>

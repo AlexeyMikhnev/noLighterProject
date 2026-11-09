@@ -5,6 +5,7 @@ import Reviews from "../components/Reviews.jsx";
 import Disclaimer from "../components/Disclaimer.jsx";
 import StoryBody from "../components/StoryBody.jsx";
 import SurveyStats from "../components/SurveyStats.jsx";
+import Violation, { violationText } from "../components/Violation.jsx";
 
 function fmt(v, isStars) {
   return isStars ? String(v) : v.toFixed(2);
@@ -40,10 +41,12 @@ export default function Results({ contest }) {
   const tabs = [
     { key: "stars", label: "★ Звёзды", ranking: data.stars.ranking, isStars: true },
     ...data.scales.map((s) => ({ key: s.key, label: s.label, ranking: s.ranking, isStars: false })),
+    { key: "detective", label: "🔍 Лучший детектив", detective: true, ranking: data.detective.ranking, excluded: data.detective.excluded },
     { key: "all", label: "Все работы и рецензии", all: true },
   ];
   const current = tabs.find((t) => t.key === tab);
-  const winners = current.all ? [] : current.ranking.filter((e) => e.rank === 1);
+  const winners = current.all || current.detective ? [] : current.ranking.filter((e) => e.rank === 1);
+  const detectiveWinners = current.detective ? current.ranking.filter((e) => e.rank === 1) : [];
 
   return (
     <div className="card">
@@ -79,7 +82,53 @@ export default function Results({ contest }) {
         </p>
       )}
 
-      {current.all ? (
+      {detectiveWinners.length > 0 && (
+        <p className="winner">
+          🔍 {detectiveWinners.length > 1 ? "Лучшие детективы" : "Лучший детектив"}:{" "}
+          <strong>{detectiveWinners.map((w) => `${w.nickname} (${w.value.toFixed(2)})`).join("; ")}</strong>
+        </p>
+      )}
+
+      {current.detective ? (
+        current.ranking.length === 0 ? (
+          <p className="muted">В «угадайке» никто не участвовал.</p>
+        ) : (
+          <>
+            <table className="ranking static">
+              <thead>
+                <tr>
+                  <th>Место</th>
+                  <th>Участник</th>
+                  <th className="num">Очки</th>
+                  <th className="num">Отмечено рассказов</th>
+                  <th className="num">Угадано</th>
+                </tr>
+              </thead>
+              <tbody>
+                {current.ranking.map((e) => (
+                  <tr key={e.nickname} className={e.rank === 1 ? "first" : ""}>
+                    <td>{e.rank}</td>
+                    <td>{e.nickname}</td>
+                    <td className="num">{e.value.toFixed(2)}</td>
+                    <td className="num">{e.marked}</td>
+                    <td className="num">{e.hits}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="muted small">
+              Очки: за каждый рассказ верно названный автор даёт 1 балл, поделённый на число отметок в строке (двое —
+              по 0,5). В рейтинге только те, кто что-то отметил. Свой разбор по строкам: <Link to="/guess">Угадайка</Link>.
+            </p>
+            {current.excluded.length > 0 && (
+              <p className="muted small">
+                Вне зачёта (не выполнено обязательное оценивание, как и для рассказов в топах):{" "}
+                {current.excluded.map((e) => `${e.nickname} (${e.value.toFixed(2)})`).join(", ")}.
+              </p>
+            )}
+          </>
+        )
+      ) : current.all ? (
         <>
           <table className="ranking">
             <thead>
@@ -93,10 +142,18 @@ export default function Results({ contest }) {
             </thead>
             <tbody>
               {all.map((e) => (
-                <tr key={e.anon_number} onClick={() => setOpen(open === e.anon_number ? null : e.anon_number)}>
+                <tr
+                  key={e.anon_number}
+                  className={e.violation ? "violator" : ""}
+                  title={e.violation ? `Нарушил правила: ${violationText(e.violation)}` : undefined}
+                  onClick={() => setOpen(open === e.anon_number ? null : e.anon_number)}
+                >
                   <td>{e.anon_number}</td>
                   <td>{e.title}</td>
-                  <td>{e.author}</td>
+                  <td>
+                    {e.author}
+                    {e.violation && <span className="violator-mark"> ⚠</span>}
+                  </td>
                   <td className="num">{e.words}</td>
                   <td className="num">{e.reviews}</td>
                 </tr>
@@ -138,20 +195,24 @@ export default function Results({ contest }) {
       )}
       <p className="muted small">
         Нажмите на строку, чтобы прочитать рассказ, увидеть его оценки и рецензии. Рецензенты остаются анонимными.
+        Красным отмечены авторы, не выполнившие обязательное при оценивании (оценить все чужие работы и раздать все
+        звёзды): их работы можно читать, но в топах и среди победителей их нет.
         Свои оценки и рецензии, а также архив прошлых конкурсов, ищите в <Link to="/profile">личном кабинете</Link>.
       </p>
 
       {story && (
-        <section className="result-story">
+        <section className={story.violation ? "result-story violator" : "result-story"}>
           <div className="eyebrow">
             №{story.anon_number} · автор: {story.author}
           </div>
           <h3>{story.title}</h3>
           <p className="muted small">
-            Оценок: {story.votes} · звёзд: {story.stars}
+            Оценок: {story.votes} · звёзд: {story.stars} · автора назвали верно: {story.guessed.hits} из{" "}
+            {story.guessed.guessers} игравших в угадайку
             {story.scores &&
               " · " + contest.scales.map((s) => `${s.label}: ${story.scores[s.key].toFixed(2)}`).join(" · ")}
           </p>
+          <Violation violation={story.violation} />
           <Disclaimer text={story.disclaimer} />
           <StoryBody html={story.body} />
           <SurveyStats stats={story.survey} title="Опросник читателей: этот рассказ" />
