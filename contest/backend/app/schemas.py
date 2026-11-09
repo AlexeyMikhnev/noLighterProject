@@ -186,3 +186,11 @@ class ContestPatchIn(_Deadlines):
 class InvitesIn(BaseModel):
     count: int = Field(default=1, ge=1, le=50)
     expires_in_days: int | None = Field(default=None, ge=1, le=365)
+
+
+class GuessRowIn(BaseModel):
+    """Все отметки одной строки матрицы (один рассказ). Пустой список снимает все отметки."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    nicknames: list[str] = Field(max_length=500)

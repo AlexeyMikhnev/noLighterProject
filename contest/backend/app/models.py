@@ -158,3 +158,20 @@ class Review(Base):
     body: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class Guess(Base):
+    """Отметка в «угадайке»: читатель считает, что автор рассказа — этот участник.
+
+    В одной строке матрицы (рассказ × читатель) может быть несколько отметок: тогда за верный ответ
+    очки делятся поровну (отметил двоих — 0,5 балла). Правильность наружу НЕ отдаётся до фазы results.
+    """
+
+    __tablename__ = "guesses"
+    __table_args__ = (UniqueConstraint("story_id", "guesser_id", "guessed_user_id", name="uq_guess"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    contest_id: Mapped[int] = mapped_column(ForeignKey("contests.id"), index=True)
+    story_id: Mapped[int] = mapped_column(ForeignKey("stories.id"), index=True)
+    guesser_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    guessed_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))

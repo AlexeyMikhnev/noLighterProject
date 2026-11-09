@@ -264,3 +264,96 @@ details > summary { cursor: pointer; margin: 6px 0; }
 
 .rules-page .story-body { max-width: 72ch; }
 .rules-page .story-body h2 { margin-top: 1.6em; }
+
+/* угадайка: матрица с закреплёнными заголовками */
+.matrix-wrap {
+  --hl: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  overflow: auto;
+  max-height: calc(100vh - 140px);
+  min-height: 240px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.matrix-wrap:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.matrix { border-collapse: separate; border-spacing: 0; font-size: 0.85rem; }
+.matrix th, .matrix td {
+  padding: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+/* строка с никами остаётся на месте при вертикальной прокрутке */
+.matrix thead th { position: sticky; top: 0; z-index: 3; }
+/* столбец с рассказами остаётся на месте при горизонтальной прокрутке */
+.matrix tbody th.rowh {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  min-width: 230px;
+  padding: 0 10px;
+  text-align: left;
+  font-weight: 400;
+  box-shadow: 1px 0 0 var(--line);
+}
+.matrix thead th.corner {
+  left: 0;
+  z-index: 4;
+  min-width: 230px;
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: bottom;
+  color: var(--muted);
+  font-weight: 400;
+  box-shadow: 1px 0 0 var(--line);
+}
+.matrix th.colh { min-width: 36px; width: 36px; height: 1px; vertical-align: bottom; }
+.matrix th.colh span {
+  display: block;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  white-space: nowrap;
+  max-height: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0 auto;
+  padding: 8px 0;
+  font-weight: 600;
+}
+.matrix th.colh.warn { color: var(--accent); box-shadow: inset 0 -3px 0 var(--accent); }
+/* заголовок строки в одну строку: все клетки остаются квадратными, полное название — по наведению */
+.matrix .rowh-in { display: flex; align-items: center; gap: 6px; width: 210px; height: 36px; }
+.matrix .rowh .num { flex: none; color: var(--muted); }
+.matrix .rowh .t { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.matrix .rowh .pts { flex: none; color: var(--muted); font-size: 0.8rem; }
+details.rules { margin: 4px 0 12px; }
+details.rules summary { cursor: pointer; color: var(--accent); }
+.matrix td { width: 36px; min-width: 36px; height: 36px; text-align: center; }
+.cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-weight: 700;
+}
+td > .cell:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.cell.on { background: var(--accent); color: var(--accent-ink); }
+.cell.hit { background: var(--ok); color: var(--surface); }
+.cell.miss { background: #c0392b; color: #fff; }
+.cell.truth { color: var(--ok); border: 2px solid var(--ok); }
+.cell:disabled { cursor: default; opacity: 1; }
+.matrix-legend .cell { width: 1.6em; height: 1.6em; min-height: 0; vertical-align: middle; }
+.warn-note { padding: 8px 12px; border-left: 4px solid var(--accent); background: var(--bg); border-radius: 0 8px 8px 0; }
+
+@media (max-width: 820px) {
+  .matrix-wrap { max-height: calc(100vh - 100px); }
+  .matrix tbody th.rowh, .matrix thead th.corner { min-width: 150px; }
+  .matrix .rowh-in { width: 130px; }
+}

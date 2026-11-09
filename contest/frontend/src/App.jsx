@@ -8,6 +8,8 @@ import Admin from "./pages/Admin.jsx";
 import Profile from "./pages/Profile.jsx";
 import Rules from "./pages/Rules.jsx";
 
+import Guess from "./pages/Guess.jsx";
+
 function ThemeToggle() {
   const { theme, toggle } = useTheme();
   const toDark = theme !== "dark";
@@ -33,7 +35,10 @@ function Header() {
             {user.role === "organizer" ? (
               <Link to="/admin">Кабинет организатора</Link>
             ) : (
-              <Link to="/profile">Личный кабинет</Link>
+              <>
+                <Link to="/guess">Угадайка</Link>
+                <Link to="/profile">Личный кабинет</Link>
+              </>
             )}
             <span className="muted">{user.nickname}</span>
             <button className="link" onClick={logout}>
@@ -66,6 +71,7 @@ export default function App() {
           <Route path="/register/:token" element={<Register />} />
           <Route path="/" element={<Private><Home /></Private>} />
           <Route path="/profile" element={<Private><Profile /></Private>} />
+          <Route path="/guess" element={<Private><Guess /></Private>} />
           <Route path="/admin" element={<Private organizer><Admin /></Private>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
