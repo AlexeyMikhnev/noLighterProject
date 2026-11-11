@@ -137,5 +137,16 @@ frontend/src/   pages/{Login,Register,Home,Submission,Voting,Results,Guess,Profi
 
 ## Обновление существующей базы
 
-Добавилась таблица `reviews`. `Base.metadata.create_all` создаёт её при старте сам, существующие данные не
-затрагиваются, ручная миграция не нужна.
+Новые таблицы (`reviews`, `settings`, `surveys`, `stars`, `guesses`) приложение создаёт при старте само
+(`create_all`), данные не затрагиваются. Для баз версий 3 и новее больше ничего не нужно.
+
+Для старых баз (с оценками `light`/`dark` и текстами без HTML) есть скрипт миграции. Остановите бэкенд и выполните
+из `contest/backend`:
+
+```
+python scripts/migrate_db.py --dry-run     # посмотреть план
+python scripts/migrate_db.py               # мигрировать (рядом сохранится копия contest.db.bak-…)
+```
+
+Скрипт переводит тексты рассказов в безопасный HTML, добавляет `disclaimer`, заменяет `light`/`dark` шкалой
+`mood = (light + 7 - dark) // 2` и пересобирает `ratings`. Повторный запуск ничего не меняет.
